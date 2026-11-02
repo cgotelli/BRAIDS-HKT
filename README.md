@@ -6,9 +6,9 @@
 
 ### River hydrodynamics and hydrokinetic energy assessment
 
-BRAIDS-HKT is a Windows desktop application for exploring how river flow can supply hydrokinetic turbines. Build a river model from a digital elevation model, place turbines, simulate their interaction with the flow, and follow the power produced by each device as conditions change.
+BRAIDS-HKT is a Windows desktop application for exploring how river flow can supply hydrokinetic energy. Build a river model from a digital elevation model, place turbines, simulate their interaction with the flow, and follow the power produced by each device as conditions change.
 
-The project aims to support estimates of **hydrokinetic energy potential in Swiss rivers**, from individual turbine locations to river reaches with multiple devices. It brings terrain, flow, turbine placement and power results together in one graphical workspace.
+The project aims to support estimates of **hydrokinetic energy potential in rivers**, from individual turbine locations to river reaches with multiple devices. It brings terrain, flow, turbine placement and power results together in one graphical workspace.
 
 **[Download the Windows installer](https://github.com/cgotelli/BRAIDS-HKT/releases/latest)** · **[Releases](https://github.com/cgotelli/BRAIDS-HKT/releases)**
 
@@ -37,7 +37,7 @@ The intended workflow is to compare candidate locations and arrangements under r
 
 BRAIDS-HKT is derived from **[GeoClaw](https://www.clawpack.org/geoclaw.html)**, part of the [Clawpack](https://www.clawpack.org/) ecosystem. It builds on GeoClaw's augmented f-wave approach to the shallow-water equations and wetting and drying, with BRAIDS developments for river meshes, CPU/GPU execution and turbine–flow coupling.
 
-The standalone graphical interface adapts mapping and desktop components from [AVAC Desktop](https://github.com/cgotelli/AVAC-Desktop/). QGIS is not required.
+The standalone graphical interface adapts mapping and desktop components from [AVAC Desktop](https://github.com/cgotelli/AVAC-Desktop/).
 
 ## Install
 
@@ -45,7 +45,7 @@ The standalone graphical interface adapts mapping and desktop components from [A
 2. Download **`BRAIDS-HKT-0.1.0-Windows-x64-Setup.exe`** and run it.
 3. Launch **BRAIDS-HKT** from the Start menu or desktop shortcut.
 
-The installer supplies the application, Python environment and solver libraries. No Python installation, compiler or QGIS installation is needed. GPU execution requires a compatible NVIDIA GPU and driver; CPU execution is also available.
+The installer supplies the application, Python environment and solver libraries. No Python installation or compiler is needed. GPU execution requires a compatible NVIDIA GPU and driver; CPU execution is also available.
 
 **Install the application from Releases.** GitHub's automatic source-code ZIP and TAR downloads are source snapshots, not application installers.
 

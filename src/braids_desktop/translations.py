@@ -1,0 +1,33 @@
+"""BRAIDS workflow labels supplement the retained AVAC interface catalogs."""
+KEYS=('Domain','Mesh','Boundaries','Sediment','Forcing','Run','Extensions','Sediment transport',
+      'Preferences','Geometry','Import DEM','Import domain','Open demo','New project','Open project folder',
+      'Save project','Save as a new folder','Open result folder','MODEL WORKFLOW','RESULTS','MAP LAYERS',
+      'Prepare','Stop','Show results while running','Review boundary alignment','Delete boundary',
+      'Compute backend','Hydraulic roughness','Boundary conditions','Polygon and line color','Map background',
+      'Satellite','None','Language changes apply after restarting BRAIDS. Other presentation choices apply immediately.')
+LABELS={
+ 'es':dict(zip(KEYS,('Dominio','Malla','Condiciones de contorno','Sedimentos','Aportes','Ejecutar','Extensiones','Transporte de sedimentos',
+      'Preferencias','Geometría','Importar MDE','Importar dominio','Abrir ejemplo','Nuevo proyecto','Abrir carpeta del proyecto',
+      'Guardar proyecto','Guardar en otra carpeta','Abrir carpeta de resultados','CONFIGURACIÓN DEL MODELO','RESULTADOS','CAPAS DEL MAPA',
+      'Preparar','Detener','Mostrar resultados durante el cálculo','Revisar alineación de contornos','Eliminar contorno',
+      'Backend de cálculo','Rugosidad hidráulica','Condiciones de contorno','Color de polígonos y líneas','Fondo del mapa',
+      'Satélite','Ninguno','El idioma cambia al reiniciar BRAIDS. Las demás opciones se aplican inmediatamente.'))),
+ 'fr':dict(zip(KEYS,('Domaine','Maillage','Limites','Sédiments','Apports','Calcul','Extensions','Transport sédimentaire',
+      'Préférences','Géométrie','Importer le MNT','Importer le domaine','Ouvrir un exemple','Nouveau projet','Ouvrir le dossier du projet',
+      'Enregistrer le projet','Enregistrer dans un autre dossier','Ouvrir les résultats','CONFIGURATION DU MODÈLE','RÉSULTATS','COUCHES DE LA CARTE',
+      'Préparer','Arrêter','Afficher les résultats pendant le calcul','Vérifier l’alignement des limites','Supprimer la limite',
+      'Backend de calcul','Rugosité hydraulique','Conditions aux limites','Couleur des polygones et lignes','Fond de carte',
+      'Satellite','Aucun','La langue change au redémarrage de BRAIDS. Les autres options s’appliquent immédiatement.'))),
+ 'de':dict(zip(KEYS,('Gebiet','Netz','Randbedingungen','Sediment','Zufuhr','Berechnung','Erweiterungen','Sedimenttransport',
+      'Einstellungen','Geometrie','DGM importieren','Gebiet importieren','Beispiel öffnen','Neues Projekt','Projektordner öffnen',
+      'Projekt speichern','In neuem Ordner speichern','Ergebnisordner öffnen','MODELLKONFIGURATION','ERGEBNISSE','KARTENEBENEN',
+      'Vorbereiten','Stoppen','Ergebnisse während der Berechnung anzeigen','Randausrichtung prüfen','Randbedingung löschen',
+      'Rechenbackend','Hydraulische Rauheit','Randbedingungen','Farbe der Polygone und Linien','Kartenhintergrund',
+      'Satellit','Keiner','Die Sprache ändert sich nach einem Neustart von BRAIDS. Andere Optionen gelten sofort.'))),
+ 'it':dict(zip(KEYS,('Dominio','Griglia','Condizioni al contorno','Sedimenti','Apporti','Calcolo','Estensioni','Trasporto di sedimenti',
+      'Preferenze','Geometria','Importa DEM','Importa dominio','Apri esempio','Nuovo progetto','Apri cartella del progetto',
+      'Salva progetto','Salva in un’altra cartella','Apri risultati','CONFIGURAZIONE DEL MODELLO','RISULTATI','LIVELLI DELLA MAPPA',
+      'Prepara','Ferma','Mostra i risultati durante il calcolo','Verifica allineamento dei contorni','Elimina contorno',
+      'Backend di calcolo','Scabrezza idraulica','Condizioni al contorno','Colore di poligoni e linee','Sfondo della mappa',
+      'Satellite','Nessuno','La lingua cambia al riavvio di BRAIDS. Le altre opzioni si applicano subito.')))
+}

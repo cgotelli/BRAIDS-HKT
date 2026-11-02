@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0",
+  "baseline": "BRAIDS Desktop 0.1.0-preview68",
+  "runtime_manifest_sha256": "c6e29ef428db2106b0ac938c5d01110992b28c2708b5aeaafa2beeadbc4b6915",
+  "source_repository": "https://github.com/cgotelli/BRAIDS-HKT",
+  "distribution": "Windows x64; bundled Python and CPU/GPU runtime",
+  "packaging_changes": [
+    "Relocated live runtime support out of historical validation namespace",
+    "Generated synthetic in-app demo instead of private example assets",
+    "Standalone Python dependency and CUDA runtime bundle",
+    "Desktop application branding and per-user launcher"
+  ]
+}

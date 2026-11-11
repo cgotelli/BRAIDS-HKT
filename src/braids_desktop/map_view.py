@@ -6,7 +6,7 @@ from PySide6.QtGui import QColor, QPainterPath, QPen, QLinearGradient,QIcon,QPix
 from PySide6.QtWidgets import QToolButton,QGraphicsView,QGraphicsEllipseItem,QGraphicsItem
 from ._avac.map_view import MapView as AVACMapView
 from ._avac.preferences import geometry_color,mesh_color,snap_enabled
-from .map_tools import TemporaryRuler,tool_icon
+from .map_tools import TemporaryRuler,TemporaryBedProfile,tool_icon
 
 
 class MeasurementHandle(QGraphicsEllipseItem):
@@ -69,12 +69,15 @@ class RiverMapView(AVACMapView):
     dem_dropped=Signal(str)
     zone_edited=Signal(str,str,object)
     inspect_result=Signal(object)
+    bed_profile_drawn=Signal(object)
+    feature_delete_requested=Signal(str,str)
 
     def __init__(self, parent=None):
         self.boundary_items = []
         self.selected_edges = set()
         self.assignments = []
         self.domain_edges = []
+        self.boundary_reference_rings=[]
         self.result_metadata = None
         self.capture_mode = None
         self.turbine_items=[];self.turbines=None;self.turbine_preview_diameter=.7
@@ -82,11 +85,14 @@ class RiverMapView(AVACMapView):
         self._measurement_handles=[];self._measurement_edit=None;self._measurement_features=[]
         self._draft_cursor=None
         self.preview_mesh_item=None
-        self.ruler=TemporaryRuler();self._exporting_map=False
+        self.ruler=TemporaryRuler();self.bed_profile=TemporaryBedProfile();self._exporting_map=False
         self.breakline_items=[];self.breaklines=[];self._breakline_handles=[];self._breakline_edit=None
         self.solid_items=[];self.solids=[];self._solid_handles=[];self._solid_edit=None
         self.zone_items={'roughness':[],'erodible':[]};self.zones={'roughness':[],'erodible':[]};self._zone_handles=[];self._zone_edit=None
         super().__init__(parent)
+        self._selected_breakline=None
+        self.tool_buttons['delete'].setCheckable(True)
+        self.tool_buttons['delete'].setToolTip('Delete a feature: click its line, point or polygon. Right-click cancels.')
         self.setAcceptDrops(True)
         self._middle_pan=None
         self.tool_buttons['polygon'].setToolTip('Draw domain · click vertices; double-click or Enter to finish')
@@ -95,14 +101,20 @@ class RiverMapView(AVACMapView):
         fit.setFixedSize(36,36);fit.setToolTip('Zoom to domain');fit.clicked.connect(self.zoom_domain_requested.emit)
         self.navigation_controls.layout().insertWidget(0,fit);self.tool_buttons['fit_domain']=fit
         ruler=QToolButton(self.navigation_controls);ruler.setObjectName('MapControl');ruler.setFixedSize(36,36)
-        ruler.setCheckable(True);ruler.setToolTip('Measure distances · click multiple points; right-click clears')
-        ruler.setAccessibleName('Measure distances');ruler.clicked.connect(lambda:self.set_tool('ruler'))
+        ruler.setCheckable(True);ruler.setToolTip('Measure distance and terrain slope · positive slope means elevation falls from the first point to the last; right-click clears')
+        ruler.setAccessibleName('Measure distance and terrain slope');ruler.clicked.connect(lambda:self.set_tool('ruler'))
         navigation=self.navigation_controls.layout();navigation.insertWidget(navigation.indexOf(self.tool_buttons['pan'])+1,ruler)
         self.tool_buttons['ruler']=ruler
+        bed_profile=QToolButton(self.navigation_controls);bed_profile.setObjectName('MapControl');bed_profile.setFixedSize(36,36)
+        # A native Unicode mountain is reliable in the Windows UI font and
+        # communicates terrain/elevation more directly than the prior glyph.
+        bed_profile.setCheckable(True);bed_profile.setToolTip('Draw bed profile · click points, right-click to plot');bed_profile.setAccessibleName('Draw bed profile')
+        bed_profile.clicked.connect(lambda:self.set_tool('bed_profile'))
+        navigation.insertWidget(navigation.indexOf(ruler)+1,bed_profile);self.tool_buttons['bed_profile']=bed_profile
         inspect=QToolButton(self.navigation_controls);inspect.setObjectName('MapControl');inspect.setText('i');inspect.setCheckable(True)
         inspect.setFixedSize(36,36);inspect.setToolTip('Identify result value at a cell');inspect.clicked.connect(lambda:self.set_tool('identify'))
         navigation.addWidget(inspect);self.tool_buttons['identify']=inspect
-        for key in ('select','pan','ruler'):
+        for key in ('pan','ruler','bed_profile'):
             button=self.tool_buttons[key];button.setText('');button.setIcon(tool_icon(key));button.setIconSize(QSize(24,24))
         for key in ('fit_domain','zoom_in','zoom_out'):
             pix=QPixmap(48,48);pix.fill(Qt.transparent);p=QPainter(pix);p.setRenderHint(QPainter.Antialiasing)
@@ -113,6 +125,7 @@ class RiverMapView(AVACMapView):
             p.end();button=self.tool_buttons[key];button.setText('');button.setIcon(QIcon(pix));button.setIconSize(QSize(24,24))
 
     def clear(self):
+        self.boundary_reference_rings=[]
         self.turbine_items=[];self.turbines=None
         self.zone_items={'roughness':[],'erodible':[]};self.zones={'roughness':[],'erodible':[]};self._zone_handles=[];self._zone_edit=None
         self.solid_items=[];self.solids=[];self._solid_handles=[];self._solid_edit=None
@@ -135,6 +148,7 @@ class RiverMapView(AVACMapView):
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
         if self.tool=='ruler' and not self._exporting_map:self.ruler.draw(painter,self)
+        if self.tool=='bed_profile' and not self._exporting_map:self.bed_profile.draw(painter,self)
         if not self.result_metadata or not self.terrain or not getattr(self,'result_visible',True) or not self.decorations.get('legends',True):return
         if not self.styles.get('result:'+self.result_metadata['variable'],{}).get('legend_visible',True):return
         painter.save(); painter.resetTransform()
@@ -162,6 +176,30 @@ class RiverMapView(AVACMapView):
             for i in range(panel.variable.count()):layers.append(('Results — '+panel.variable.itemText(i),'result:'+panel.variable.itemData(i)))
         return layers
 
+    def visible_range_for(self,key):
+        if self.terrain is None:raise ValueError('Load terrain first.')
+        corners=self.mapToScene(self.viewport().rect()).boundingRect()
+        x0,y0=self.from_scene(corners.topLeft());x1,y1=self.from_scene(corners.bottomRight())
+        xmin,xmax=sorted((x0,x1));ymin,ymax=sorted((y0,y1))
+        if key.startswith('result:'):
+            panel=self.results_panel
+            if panel.store is None:raise ValueError('Load a result frame first.')
+            frame=panel.store.read(panel.slider.value());values=panel.store.display_values(frame,key[7:])
+            from shapely.geometry import box
+            region=box(xmin,ymin,xmax,ymax)
+            selected=np.array([poly.intersects(region) for poly in frame.polygons],dtype=bool)
+            data=np.asarray(values)[selected]
+        else:
+            raster=self.terrain.raster if key=='terrain' else self.additional_fields.get(key,self.field_raster)
+            if raster is None:raise ValueError('This layer has no visible data.')
+            xs=(raster.x>=xmin)&(raster.x<=xmax);ys=(raster.y>=ymin)&(raster.y<=ymax)
+            data=np.asarray(raster.z)[np.ix_(ys,xs)]
+        data=np.asarray(data);data=data[np.isfinite(data)]
+        if not data.size:raise ValueError('No finite values are visible for this layer.')
+        low,high=float(data.min()),float(data.max())
+        if high<=low:raise ValueError('Visible values are constant; enter a nonzero range manually.')
+        return low,high
+
     def default_palette(self,key):
         if key.startswith('result:'):
             from .results import variable_info
@@ -185,7 +223,10 @@ class RiverMapView(AVACMapView):
         else:super().refresh_appearance(key)
 
     def set_release(self, rings):
+        if rings:self.boundary_reference_rings=deepcopy(rings)
         super().set_release(rings)
+        if self.release_item is not None:
+            self.release_item.setData(10,'domain');self.release_item.setData(11,'domain')
         self.release_item.setBrush(Qt.NoBrush)
         pen = QPen(QColor(geometry_color()), 2)
         pen.setCosmetic(True)
@@ -200,9 +241,10 @@ class RiverMapView(AVACMapView):
             if item.scene() is self.scene():
                 self.scene().removeItem(item)
         self.boundary_items = []
-        if not self.rings:
+        rings=self.rings or self.boundary_reference_rings
+        if not rings:
             return
-        vertices = self.rings[0][0]
+        vertices = rings[0][0]
         if np.array_equal(vertices[0], vertices[-1]):
             vertices = vertices[:-1]
         for index, start in enumerate(vertices):
@@ -229,6 +271,7 @@ class RiverMapView(AVACMapView):
 
     def set_tool(self, tool):
         self.ruler.clear()
+        self.bed_profile.clear()
         if tool!='measurement_edit':self.end_measurement_edit()
         if tool!='breakline_edit':self.end_breakline_edit()
         if tool!='solid_edit':self.end_solid_edit()
@@ -236,10 +279,37 @@ class RiverMapView(AVACMapView):
         self._draft_cursor=None
         if tool=='pan':self.capture_mode=None
         super().set_tool(tool)
+        self.tool_buttons['delete'].setChecked(tool=='delete')
         if 'ruler' in self.tool_buttons:self.tool_buttons['ruler'].setChecked(tool=='ruler')
+        if 'bed_profile' in self.tool_buttons:self.tool_buttons['bed_profile'].setChecked(tool=='bed_profile')
         if 'identify' in self.tool_buttons:self.tool_buttons['identify'].setChecked(tool=='identify')
-        if tool=='select':self.setCursor(Qt.ArrowCursor)
         self.viewport().update()
+
+    def delete_selection(self):
+        self.set_tool('delete')
+
+    def delete_feature_at(self,position):
+        """Hit-test editable GIS paths in viewport pixels, independent of zoom."""
+        from PySide6.QtGui import QPainterPathStroker
+        stroke=QPainterPathStroker();stroke.setWidth(16)
+        point=QPointF(position);interiors=[]
+        for item in self.scene().items():
+            kind=item.data(10)
+            if not kind or not item.isVisible() or not hasattr(item,'path'):continue
+            path=item.deviceTransform(self.viewportTransform()).map(item.path())
+            if stroke.createStroke(path).contains(point):
+                hit=(kind,str(item.data(11)));self.feature_delete_requested.emit(*hit);return hit
+            if path.contains(point):interiors.append((kind,str(item.data(11))))
+        if self.sketch_item is not None and self.sketch_item.isVisible():
+            for index,line in enumerate(self.sketch_lines):
+                path=QPainterPath(self.mapFromScene(self.to_scene(*line[0])))
+                for vertex in line[1:]:path.lineTo(self.mapFromScene(self.to_scene(*vertex)))
+                if stroke.createStroke(path).contains(point):
+                    hit=('guide',str(index));self.feature_delete_requested.emit(*hit);return hit
+        if interiors:
+            hit=next((p for p in interiors if p[0]!='domain'),interiors[0])
+            self.feature_delete_requested.emit(*hit);return hit
+        return None
 
     def set_breaklines(self,rows):
         from shiboken6 import isValid
@@ -252,7 +322,16 @@ class RiverMapView(AVACMapView):
             if row['closed']:path.closeSubpath()
             pen=QPen(QColor('#c43fad'),2.5);pen.setCosmetic(True)
             item=self.scene().addPath(path,pen);item.setZValue(31);item.setToolTip(row['id'])
+            item.setData(10,'breakline');item.setData(11,row['id'])
             self.breakline_items.append(item)
+        self.highlight_breakline(getattr(self,'_selected_breakline',None))
+
+    def highlight_breakline(self,name):
+        self._selected_breakline=name
+        for item in self.breakline_items:
+            selected=item.data(11)==name
+            pen=QPen(QColor('#ff8030' if selected else '#c43fad'),4. if selected else 2.5);pen.setCosmetic(True)
+            item.setPen(pen);item.setZValue(34 if selected else 31)
 
     def begin_breakline_edit(self,row):
         self.set_tool('breakline_edit');points=np.asarray(row['points_xy'],float)
@@ -290,6 +369,7 @@ class RiverMapView(AVACMapView):
             for p in points[1:]:path.lineTo(self.to_scene(*p))
             path.closeSubpath();pen=QPen(QColor('#515964'),2);pen.setCosmetic(True)
             item=self.scene().addPath(path,pen,QColor('#a4aab2'));item.setZValue(31);item.setToolTip(row['id']+' — impermeable solid')
+            item.setData(10,'solid');item.setData(11,row['id'])
             self.solid_items.append(item)
 
     def begin_solid_edit(self,row):
@@ -319,6 +399,7 @@ class RiverMapView(AVACMapView):
         for item,feature in zip(self.analysis_items,features):
             pen=QPen(QColor('#ff8030' if feature.get('selected') else measurement_color()),3.5);pen.setCosmetic(True)
             item.setPen(pen);item.setZValue(32);item.setData(1,feature.get('id'))
+            item.setData(10,feature['kind']);item.setData(11,feature.get('id'))
 
     def set_zones(self,zones):
         from shiboken6 import isValid
@@ -333,6 +414,7 @@ class RiverMapView(AVACMapView):
                 for p in points[1:]:path.lineTo(self.to_scene(*p))
                 path.closeSubpath();pen=QPen(color,2);pen.setCosmetic(True)
                 item=self.scene().addPath(path,pen,fill);item.setZValue(29);item.setToolTip(f"{row['id']}: {row['value']}")
+                item.setData(10,'zone:'+kind);item.setData(11,row['id'])
                 self.zone_items[kind].append(item)
 
     def begin_zone_edit(self,kind,row):
@@ -381,8 +463,15 @@ class RiverMapView(AVACMapView):
 
     def set_model_tools(self,enabled):
         super().set_model_tools(enabled)
+        self.tool_buttons['delete'].show()
         if not enabled and self.tool in ('solid_edit','breakline_edit','zone_edit','ellipse'):self.set_tool('pan')
         self._position_controls()
+
+    def _position_controls(self):
+        super()._position_controls()
+        # Keep the trash control accessible for result probes/profiles even
+        # when all model drawing controls are hidden by the shell.
+        self.map_controls.show()
 
     def zoom(self,factor):
         center=self.mapToScene(self.viewport().rect().center());anchor=self.transformationAnchor()
@@ -393,8 +482,8 @@ class RiverMapView(AVACMapView):
 
     def wheelEvent(self,event):
         AVACMapView.zoom(self,1.2 if event.angleDelta().y()>0 else 1/1.2)
-        if self.tool=='ruler' and self.terrain:
-            self.ruler.cursor=AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint()));self.viewport().update()
+        if self.tool in ('ruler','bed_profile') and self.terrain:
+            (self.ruler if self.tool=='ruler' else self.bed_profile).cursor=AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint()));self.viewport().update()
         event.accept()
 
     def show_preview_mesh(self,polygons):
@@ -446,13 +535,13 @@ class RiverMapView(AVACMapView):
                 bar.setValue(bar.value()-shift)
             self._expand_canvas();event.accept();return
         super().mouseMoveEvent(event)
-        if self.tool=='ruler' and self.terrain:
-            self.ruler.cursor=AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint()));self.viewport().update()
+        if self.tool in ('ruler','bed_profile') and self.terrain:
+            (self.ruler if self.tool=='ruler' else self.bed_profile).cursor=AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint()));self.viewport().update()
         if self.tool in ('polygon','line','profile','ellipse') and self.points:
             self._draft_cursor=self.from_scene(self.mapToScene(event.position().toPoint()));self._draw_draft()
 
     def mouseDoubleClickEvent(self,event):
-        if self.tool=='ruler':event.accept();return
+        if self.tool in ('ruler','bed_profile'):event.accept();return
         if event.button()==Qt.LeftButton and self.tool not in ('polygon','line','profile','ellipse'):
             point=self.mapToScene(event.position().toPoint())
             for item in self.items(event.position().toPoint()):
@@ -491,6 +580,8 @@ class RiverMapView(AVACMapView):
         return x,y
 
     def mousePressEvent(self, event):
+        if self.tool=='delete' and event.button()==Qt.LeftButton:
+            self.delete_feature_at(event.position().toPoint());event.accept();return
         if self.capture_mode=='turbine' and self.tool=='line' and self.terrain and event.button()==Qt.LeftButton:
             self.points.append(list(AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint()))))
             if len(self.points)==2:self.finish_drawing()
@@ -501,6 +592,10 @@ class RiverMapView(AVACMapView):
             self._pan_cursor=self.cursor();self.setCursor(Qt.ClosedHandCursor)
             event.accept();return
         if event.button() == Qt.RightButton:
+            if self.tool=='bed_profile':
+                points=self.bed_profile.vertices()
+                if len(points)>=2:self.bed_profile_drawn.emit(points)
+                self.set_tool('pan');event.accept();return
             if self.tool in ('polygon', 'line', 'profile') and self.points:
                 self.finish_drawing()
             self.set_tool('pan')
@@ -510,6 +605,9 @@ class RiverMapView(AVACMapView):
             self.inspect_result.emit(AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint())));event.accept();return
         if self.tool=='ruler' and self.terrain and event.button()==Qt.LeftButton:
             self.ruler.add(AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint())))
+            self.viewport().update();event.accept();return
+        if self.tool=='bed_profile' and self.terrain and event.button()==Qt.LeftButton:
+            self.bed_profile.add(AVACMapView.from_scene(self,self.mapToScene(event.position().toPoint())))
             self.viewport().update();event.accept();return
         if event.button()==Qt.LeftButton and self.tool=='pan':
             for item in self.items(event.position().toPoint()):
@@ -548,6 +646,9 @@ class RiverMapView(AVACMapView):
         for row in (value or {}).get('turbines',[]):
             a,b=rotor_line(row);path=QPainterPath(self.to_scene(*a));path.lineTo(self.to_scene(*b));pen=QPen(QColor('#00a3a8'),4);pen.setCosmetic(True)
             item=self.scene().addPath(path,pen);item.setZValue(33);item.setToolTip(row['id']+' · rotor perpendicular to local river direction');self.turbine_items.append(item)
+
+        for item,row in zip(self.turbine_items,(value or {}).get('turbines',[])):
+            item.setData(10,'turbine');item.setData(11,row['id'])
 
     def mouseReleaseEvent(self,event):
         if event.button()==Qt.MiddleButton and self._middle_pan is not None:

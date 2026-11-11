@@ -1,5 +1,6 @@
 # Standalone PySide6 port of the maintained BRAIDS configuration editor.
 """One method-aware boundary editor; no alternate execution workspace."""
+import json
 from PySide6.QtCore import Qt,Signal
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QFormLayout,QLineEdit,QTableWidget,
     QTableWidgetItem,QHeaderView,QHBoxLayout,QPushButton)
@@ -109,6 +110,13 @@ class RiverBoundaryEditor(QWidget):
         form.addRow('Boundary',self.boundary);form.addRow('Hydraulic method',self.method);form.addRow('Stage reversal policy',self.policy)
         self.policy_label=form.labelForField(self.policy)
         self.hydraulic_values=BoundaryValues();form.addRow(self.hydraulic_values)
+        self.rating=QTableWidget(0,2);self.rating.setHorizontalHeaderLabels(['Discharge Q (m³/s)','Water elevation H (m)'])
+        self.rating.setMinimumHeight(130);self.rating.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        form.addRow(self.rating)
+        self.rating_buttons=QWidget();rating_layout=QHBoxLayout(self.rating_buttons);rating_layout.setContentsMargins(0,0,0,0)
+        self.rating_add=QPushButton('Add Q–H row');self.rating_remove=QPushButton('Remove selected row')
+        rating_layout.addWidget(self.rating_add);rating_layout.addWidget(self.rating_remove);form.addRow(self.rating_buttons)
+        self.rating.itemChanged.connect(self._rating_edit);self.rating_add.clicked.connect(self._rating_add);self.rating_remove.clicked.connect(self._rating_remove)
         self.hydraulic_note=WrappedNote();form.addRow(self.hydraulic_note)
         self.secondary_intensity=NumericLineEdit('0')
         self.secondary_intensity.setToolTip('Independent upstream secondary-current intensity I (m/s), positive clockwise. Use 0 for an uncurved upstream approach. Nonzero values represent known incoming circulation. Applied only to inward water flux, including permitted outlet backflow; outgoing current is exported. Inactive when secondary flow is off.')
@@ -143,6 +151,25 @@ class RiverBoundaryEditor(QWidget):
         row['stage_policy']=self.policy.currentData()
         row['secondary_intensity_m_s']=self.secondary_intensity.canonical_text()
         b=row['beds'][row['bed']];b['initial']=self.initial.currentData();b['initial_elevation_m']=self.initial_elevation.canonical_text()
+
+    def _rating_edit(self,*_):
+        if self._busy or self.row() is None or self.row()['hydraulic']!='outlet.rating_curve':return
+        rows=[[self.rating.item(i,j).text() if self.rating.item(i,j) else '' for j in range(2)] for i in range(self.rating.rowCount())]
+        self.row()['controls']['outlet.rating_curve']['values']['rating_curve']=json.dumps(rows)
+        self.changed.emit()
+
+    def _rating_add(self):
+        self._busy=True
+        try:
+            i=self.rating.rowCount();self.rating.insertRow(i)
+            for j in range(2):self.rating.setItem(i,j,QTableWidgetItem(''))
+        finally:self._busy=False
+        self._rating_edit()
+
+    def _rating_remove(self):
+        i=self.rating.currentRow()
+        if i<0:return
+        self.rating.removeRow(i);self._rating_edit()
 
     def _edit(self,*_):
         if self._busy:return
@@ -183,7 +210,15 @@ class RiverBoundaryEditor(QWidget):
                 if role==self._shown_role:self.method.addItem(label,m)
             set_choice(self.method,row['hydraulic']);set_choice(self.policy,row['stage_policy'])
             self.secondary_intensity.setText(row['secondary_intensity_m_s'])
-            m=row['hydraulic'];self.hydraulic_values.load(row['controls'][m],HYDRAULICS[m][2],HYDRAULICS[m][3],
+            m=row['hydraulic']
+            if m=='outlet.rating_curve':
+                self.hydraulic_values.source=None
+                try:records=json.loads(row['controls'][m]['values']['rating_curve'])
+                except (TypeError,ValueError):records=[]
+                self.rating.setRowCount(len(records))
+                for i,record in enumerate(records):
+                    for j in range(2):self.rating.setItem(i,j,QTableWidgetItem(str(record[j])))
+            else:self.hydraulic_values.load(row['controls'][m],HYDRAULICS[m][2],HYDRAULICS[m][3],
                                                        {k:v[0] for k,v in PARAMETERS.items()})
             m=row['bed'];set_choice(self.bed_method,m);b=row['beds'][m]
             set_choice(self.initial,b['initial']);self.initial_elevation.setText(b['initial_elevation_m'])
@@ -200,7 +235,12 @@ class RiverBoundaryEditor(QWidget):
         self.box.setEnabled(self._shown is not None);self.bed_box.setEnabled(self._shown is not None and self._enabled)
         stage=self.method.currentData()=='outlet.stage'
         self.policy.setVisible(stage);self.policy_label.setVisible(stage)
-        self.hydraulic_note.setText(APPLICABILITY.get(self.method.currentData(),''))
+        method=self.method.currentData();note=APPLICABILITY.get(method,'')
+        rating=method=='outlet.rating_curve'
+        self.hydraulic_values.setVisible(not rating);self.rating.setVisible(rating);self.rating_buttons.setVisible(rating)
+        if isinstance(method,str) and method.startswith('outlet.'):
+            note+=' When a cell cannot supply the proposed outward flow during a timestep, the applied time-averaged outflow is limited by its available water; the boundary law is unchanged when sufficient water is present.'
+        self.hydraulic_note.setText(note)
         prescribed=self.bed_method.currentData()=='bed.elevation'
         self.initial.setVisible(not prescribed);self.initial_label.setVisible(not prescribed)
         explicit=not prescribed and self.initial.currentData()=='initial.elevation'

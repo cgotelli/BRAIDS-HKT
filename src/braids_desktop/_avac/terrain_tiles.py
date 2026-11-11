@@ -39,10 +39,14 @@ class TerrainTiles(QGraphicsItem):
         self._bounds=QRectF(0,0,self.cols*self.dx,self.rows*self.dy)
         self.cache=OrderedDict();self.cache_bytes=0;self.max_bytes=max_bytes
         self.tiles_built=0;self.last_stride=(1,1);self.last_tile_keys=[]
+        # Integral image of invalid native DEM samples.  The former per-display
+        # block Python loops became expensive while zooming far out on large
+        # DEMs (such as Zin); this makes NoData-block testing vectorized.
+        invalid=~np.isfinite(raster.z[::-1])
+        self._invalid_integral=(np.pad(invalid.astype(np.uint32).cumsum(0,dtype=np.uint32).cumsum(1,dtype=np.uint32),((1,0),(1,0)))
+                                if invalid.any() else None)
         self._style=None;self.configure(limits,palette=palette)
         self.setFlag(QGraphicsItem.ItemUsesExtendedStyleOption,True)
-        self.setToolTip(f'Terrain: native DEM pixels {self.dx:g} × {self.dy:g} m. '
-                        'Zoom in for native detail; overview tiles are display-only.')
 
     def boundingRect(self):return self._bounds
 
@@ -71,6 +75,15 @@ class TerrainTiles(QGraphicsItem):
         # of every tile boundary. Coordinates handle partial edge blocks too.
         hx0=max(0,x0-1);hy0=max(0,y0-1);hx1=min(nx,x1+1);hy1=min(ny,y1+1)
         values,cx,cy=level_samples(self.raster,sx,sy,hx0,hx1,hy0,hy1)
+        # A display block must never paint through a native NoData sample.
+        # Prefix sums give all block occupancy tests in one vectorized pass.
+        if self._invalid_integral is not None:
+            ys=np.arange(hy0,hy1)*sy;ye=np.minimum(ys+sy,self.rows)
+            xs=np.arange(hx0,hx1)*sx;xe=np.minimum(xs+sx,self.cols)
+            prefix=self._invalid_integral
+            invalid=(prefix[ye[:,None],xe[None,:]]-prefix[ys[:,None],xe[None,:]]-
+                     prefix[ye[:,None],xs[None,:]]+prefix[ys[:,None],xs[None,:]])>0
+            values[invalid]=np.nan
         limits,palette,zero=self._style
         image,_,_=colour_image(values[::-1],terrain=True,
             cell=(-cy[::-1]*self.dy,cx*self.dx),limits=limits,palette=palette,zero_transparent=zero)

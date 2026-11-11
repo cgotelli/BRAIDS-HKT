@@ -54,6 +54,10 @@ class RiverMixtureSolver:
                        for d in methods.diameter_m]
         self.feed=xp.asarray(feed)
         p.class_flux=xp.zeros((ng,p.nf));p.class_delta=xp.zeros((ng,nc))
+        # Instantaneous, un-limited constitutive capacity at each accepted
+        # end state.  It is output-only: Exner continues to use class_flux
+        # after composition, available-stock and boundary treatment.
+        p.class_capacity=xp.zeros((ng,p.nf))
         p.class_boundary_ledger=xp.zeros((ng,p.nf));p.class_face_integral=xp.zeros((ng,p.nf))
         from .class_bed_update import ClassBedUpdate
         self._class_update=ClassBedUpdate(p,ng,self.material.solid)
@@ -126,6 +130,10 @@ class RiverMixtureSolver:
                     raise ValueError('Capacity density differs from the explicit class inventory')
                 p.eh=capacity;p.parameters=replace(old[1],diameter=d,porosity=self._class_porosity[k]);p.feed=self.feed[k]
                 self._single_faces(q,z,hi)
+                # Capture the formula result before donor composition,
+                # finite-stock limiting and prescribed boundary supply alter
+                # the physical transported flux.
+                p.class_capacity[k]=p.aux[2]
                 if self._wet_avalanche is not None:
                     if k==0:avalanche_flux=self._wet_avalanche.evaluate(q)
                     p.aux[2]+=avalanche_flux
@@ -173,7 +181,10 @@ class RiverMixtureSolver:
                       else self.material.bulk_increment(p.class_delta,c.sv[0]))
         change=float(xp.max(xp.abs(transport_dz)/xp.maximum(qnew[0],p.sediment_depth)))
         if closure>1e-10 or change>.05 or not bool(xp.all(xp.isfinite(p.ztrial))):
-            raise BendTrialRejected('Class transport budget or bed increment failed')
+            error=BendTrialRejected('Class transport budget or bed increment failed')
+            if closure<=1e-10 and change>.05 and bool(xp.all(xp.isfinite(p.ztrial))):
+                error.relative_bed_increment=change
+            raise error
         # Count solid material directly, not porosity times a bed difference.
         # Class-dependent packing makes the latter invalid even at fixed rock.
         solid_change=self.material.solid_volume(out)-self.material.solid_volume(c.mass)

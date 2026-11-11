@@ -7,6 +7,7 @@ import math
 import numpy as np
 from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
+from shapely import intersects
 
 
 def split_cells(template, regions, origin, stop):
@@ -39,7 +40,11 @@ def split_cells(template, regions, origin, stop):
                 parts=[part] if part.geom_type=='Polygon' else list(getattr(part,'geoms',()))
                 for p in parts:
                     if p.geom_type=='Polygon' and p.area>0:descend(p,ii,jj,level+1)
-    for cell in template.cells:
-        poly=Polygon(np.asarray(cell.vertices_xy)-origin,[np.asarray(h)-origin for h in cell.holes_xy])
-        descend(poly,cell.i,cell.j,0)
+    from .uniform_geometry import cell_polygons
+    polys=cell_polygons(template.cells,origin,stop)
+    first=intersects(polys,bands[1])
+    for k,(cell,poly,touched) in enumerate(zip(template.cells,polys,first)):
+        if k%256==0:stop()
+        if touched:descend(poly,cell.i,cell.j,0)
+        else:result.append(poly);areas.append(template.grid.dx_m*template.grid.dy_m)
     return result,np.asarray(areas)

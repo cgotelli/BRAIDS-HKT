@@ -177,7 +177,22 @@ def install(a, folder, selection, parameters):
             if cap.needs_characteristic_shear:
                 cap.z0 = p.effective_fields[2]
             if cap.uses_physical_drag:
-                cap.hydraulic_chezy = p.bedform_chezy
+                # All physical-drag laws consume the selected current CELL
+                # resistance. A second formula-name list omitted Wong--Parker
+                # and silently supplied the face-averaged surrogate instead.
+                if hasattr(p,'prescribed_chezy'):
+                    cap.hydraulic_chezy=p.prescribed_chezy
+                else:
+                    # The constant-Chezy fast path has no dynamic cell
+                    # resistance array. Its exact physical value is the
+                    # selected constant, not a face-averaged surrogate.
+                    if p.identity['river_roughness']['method']!='roughness.chezy':
+                        raise ValueError('Selected physical-drag law requires current cell hydraulic resistance')
+                    # Keep immutable derived storage off conserved restart
+                    # fields; do not alter the schema after the first step.
+                    if not hasattr(cap,'_constant_physical_chezy'):
+                        cap._constant_physical_chezy=xp.full(n,p.chezy)
+                    cap.hydraulic_chezy=cap._constant_physical_chezy
             if intrinsic:
                 cap.grain_statistics = p.intrinsic_grains
                 # This array is refreshed in-place by effective_inputs before

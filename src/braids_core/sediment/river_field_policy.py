@@ -20,6 +20,12 @@ from braids_gpu.atomic_output import arrays_to_bytes,write_bytes_atomic
 
 SCOPE='river-exclusive-mesh-policies-common-clock-v4'
 CAUSES={1:'wet'}
+# Exact predecessor files, before failure-cap checkpoint support. Both source
+# and packaged forms differ only in the established validation import rewrite.
+LEGACY_FIELD_HASHES={
+    '4c215303f82512d28e47d9d794d134cb00c699d58380c9e6a7286a76121dcf77',
+    'bde8d175361ba1ad00edb33a6728c1d200d24aa38a210ef5c7ee80a25b69893e',
+}
 
 
 @dataclass(frozen=True)
@@ -30,12 +36,13 @@ class FieldSettings:
     transition_layers:int=1
     terrain_enabled:bool=False
     domain_border_enabled:bool=False
+    open_boundary_enabled:bool=True
     terrain_angle_deg:float=5.
     terrain_detail_m:float=.1
 
     def __post_init__(self):
         for key,value in asdict(self).items():
-            if key in ('terrain_enabled','domain_border_enabled'):
+            if key in ('terrain_enabled','domain_border_enabled','open_boundary_enabled'):
                 if type(value) is not bool:raise ValueError('Explicit boolean refinement switch required')
                 continue
             if isinstance(value,bool) or not np.isfinite(value) or value<=0:raise ValueError('Positive finite field policy settings required')
@@ -50,13 +57,14 @@ def refinement_leaves(tree,requested,settings,required=()):
     wanted=np.asarray(requested,dtype=int).copy();base=tree.offsets[-2]
     if any(type(n) is not int or not base<=n<tree.count for n in required):
         raise ValueError('Refinement protection requires finest hierarchy node IDs')
-    for face in tree.finest.faces:
-        if face.neighbour<0 and face.kind in ('inlet','outlet'):wanted[base+face.owner]=tree.finest_level
+    if settings.open_boundary_enabled:
+        for face in tree.finest.faces:
+            if face.neighbour<0 and face.kind in ('inlet','outlet'):wanted[base+face.owner]=tree.finest_level
     wanted[list(required)]=tree.finest_level
     leaves=tree.balanced_leaves(wanted,transition_layers=settings.transition_layers)
     cover=tree.leaf_cover(leaves)
-    if any(cover[base+f.owner]!=base+f.owner for f in tree.finest.faces
-           if f.neighbour<0 and f.kind in ('inlet','outlet')) or not set(required).issubset(leaves):
+    if (settings.open_boundary_enabled and any(cover[base+f.owner]!=base+f.owner for f in tree.finest.faces
+           if f.neighbour<0 and f.kind in ('inlet','outlet'))) or not set(required).issubset(leaves):
         raise ValueError('Hierarchy refinement cap prevents mandatory finest protection')
     return leaves
 
@@ -94,7 +102,9 @@ class FieldIndicators:
         if p.engine.backend!=self.backend:raise ValueError('Field policy backend differs')
         n=len(leaves);g=self.geometry(t,leaves);bits=xp.empty(n,dtype=xp.int32)
         self.engine.launch('depth_tags',n,n,float(p.parameters.dry),a.q,bits)
-        active=bits.copy();active[g['entrance']]=1;other=xp.empty_like(active)
+        active=bits.copy()
+        if settings.open_boundary_enabled:active[g['entrance']]=1
+        other=xp.empty_like(active)
         # Fixed-count parallel dilation. At coarse/fine interfaces a ring may
         # be wider than one finest cell: conservative protection, never thinner.
         # Terrain pins are computed separately once, not in this loop. No GPU
@@ -162,13 +172,15 @@ class AutomaticRiver:
 
     def checkpoint_bytes(self):
         payload=self.controller.checkpoint_bytes()
+        cap=getattr(self.sediment_step_hint,'failure_cap',None)
         meta=dict(scope=SCOPE,settings=asdict(self.settings),next_time=self.next_time,events=self.events,
+            turbine_low_speed_warning=getattr(self,'turbine_low_speed_warning',None),
             sediment_clock=dict(method=river_sediment_clock.METHOD,
                 code_sha256=hashlib.sha256(Path(river_sediment_clock.__file__).read_bytes()).hexdigest(),
-                hint_s=self.sediment_step_hint),
+                hint_s=self.sediment_step_hint,failure_cap_s=cap),
             code_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),runtime=self.indicators.identity,
             history_sha256=array_sha(self.reference,self.delay,host(self.previous),
-                np.array([self.sediment_step_hint or 0.])),
+                np.array([self.sediment_step_hint or 0.,cap or 0.])),
             payload_sha256=hashlib.sha256(payload).hexdigest())
         return arrays_to_bytes(metadata=np.array(json.dumps(meta,sort_keys=True)),payload=np.frombuffer(payload,np.uint8),
             reference=self.reference,delay=self.delay,previous=host(self.previous))
@@ -181,16 +193,22 @@ class AutomaticRiver:
         with np.load(path,allow_pickle=False) as f:
             if set(f.files)!={'metadata','payload','reference','delay','previous'}:raise ValueError('Field checkpoint schema differs')
             m=json.loads(str(f['metadata']));payload=f['payload'].tobytes();reference=f['reference'];delay=f['delay'];previous=f['previous']
-        if m['scope']!=SCOPE or m['code_sha256']!=hashlib.sha256(Path(__file__).read_bytes()).hexdigest():raise ValueError('Field checkpoint code differs')
+        current_hash=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        legacy=m.get('code_sha256') in LEGACY_FIELD_HASHES
+        if m['scope']!=SCOPE or (m.get('code_sha256')!=current_hash and not legacy):raise ValueError('Field checkpoint code differs')
         if m['settings']!=asdict(settings) or not np.array_equal(reference,reference_bed):raise ValueError('Field checkpoint policy differs')
         if m['payload_sha256']!=hashlib.sha256(payload).hexdigest():raise ValueError('Field checkpoint payload differs')
         clock=m['sediment_clock'];hint=clock['hint_s']
-        if (clock['method']!=river_sediment_clock.METHOD or
-                clock['code_sha256']!=hashlib.sha256(Path(river_sediment_clock.__file__).read_bytes()).hexdigest()):
+        current_clock=(clock.get('method')==river_sediment_clock.METHOD and
+                clock.get('code_sha256')==hashlib.sha256(Path(river_sediment_clock.__file__).read_bytes()).hexdigest())
+        legacy_clock=(legacy and clock.get('method')==river_sediment_clock.LEGACY_METHOD and
+                clock.get('code_sha256')==river_sediment_clock.LEGACY_SHA256 and 'failure_cap_s' not in clock)
+        if not ((not legacy and current_clock) or legacy_clock):
             raise ValueError('Sediment step controller identity differs')
-        if hint is not None and (isinstance(hint,bool) or not np.isfinite(hint) or hint<=0):
-            raise ValueError('Invalid sediment step hint')
-        if m['history_sha256']!=array_sha(reference,delay,previous,np.array([hint or 0.])):raise ValueError('Field checkpoint history checksum differs')
+        cap=None if legacy_clock else clock.get('failure_cap_s')
+        restored_hint=river_sediment_clock.restore_hint(hint,cap)
+        history=[hint or 0.] if legacy_clock else [hint or 0.,cap or 0.]
+        if m['history_sha256']!=array_sha(reference,delay,previous,np.array(history)):raise ValueError('Field checkpoint history checksum differs')
         if delay.shape!=(hierarchy.count,) or previous.shape!=delay.shape or not np.isfinite(previous).all() or np.any(delay<0):raise ValueError('Field checkpoint history differs')
         with tempfile.TemporaryDirectory(prefix='braids-fields-') as tmp:
             p=Path(tmp)/'leaves.npz';p.write_bytes(payload);c=RiverLeafController.restart(p,hierarchy,factory)
@@ -198,14 +216,23 @@ class AutomaticRiver:
         if m['runtime']!=result.indicators.identity:raise ValueError('Field checkpoint runtime differs')
         if not np.isfinite(m['next_time']) or not c.owner.time-1e-12<=m['next_time']<=c.owner.time+settings.interval+1e-12:raise ValueError('Field checkpoint decision clock differs')
         result.delay=delay.copy();result.previous=result.indicators.xp.asarray(previous);result.next_time=float(m['next_time']);result.events=m['events']
-        result.sediment_step_hint=hint
+        result.sediment_step_hint=restored_hint
+        warning=m.get('turbine_low_speed_warning')
+        if warning is not None:
+            if (not isinstance(warning,dict) or set(warning)!={'first_time_s','turbine_ids'} or
+                type(warning['first_time_s']) not in (int,float) or not np.isfinite(warning['first_time_s']) or
+                not 0<=warning['first_time_s']<=c.owner.time or
+                not isinstance(warning['turbine_ids'],list) or not warning['turbine_ids'] or
+                any(not isinstance(name,str) or not name for name in warning['turbine_ids'])):
+                raise ValueError('Invalid turbine low-speed checkpoint diagnostic')
+        result.turbine_low_speed_warning=warning
         return result
 
 
 class FixedRiver(AutomaticRiver):
     """Checkpoint-compatible fixed mesh; no indicator kernels or runtime tags.
 
-    Slope breaks have already selected the leaves during preparation. A fixed
+    Manual constraints or slope breaks selected the leaves during preparation. A fixed
     run must not instantiate/evaluate FieldIndicators or rescan terrain, even
     on restart. The actual mesh and all physical arrays remain authenticated by
     RiverLeafController's payload. No automatic switch to dynamic refinement.
@@ -216,11 +243,11 @@ class FixedRiver(AutomaticRiver):
         self.reference=np.asarray(reference_bed,float).copy()
         if self.reference.shape!=(controller.hierarchy.count,) or not np.isfinite(self.reference).all():
             raise ValueError('Prepared hierarchy bed required')
-        self.indicators=SimpleNamespace(xp=np,identity=dict(method='fixed_initial_terrain_mesh_v1',
+        self.indicators=SimpleNamespace(xp=np,identity=dict(method=('fixed_initial_terrain_mesh_v1' if settings.terrain_enabled else 'fixed_initial_manual_mesh_v1'),
             leaves_sha256=array_sha(np.asarray(controller.leaves,dtype=np.int64))))
         self.delay=np.zeros(controller.hierarchy.count,np.int32)
         self.previous=np.zeros(controller.hierarchy.count)
         self.next_time=controller.owner.time;self.events=[];self.sediment_step_hint=None
 
     def assess(self,*args,**kwargs):
-        raise RuntimeError('Static terrain mesh must never enter an AMR assessment')
+        raise RuntimeError('Static mesh must never enter an AMR assessment')

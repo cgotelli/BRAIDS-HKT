@@ -40,7 +40,14 @@ def source(code):
     helper='LOCAL void class_mean_face(int i,'+formals+',int reuse,double*cache){'+body+'\n}\n'
     plain='ENTRY void matrix_bed_faces('+formals+'){LOOP(nf){class_mean_face(i,'+args+',0,0);}}\n'
     cached='ENTRY void matrix_bed_faces_cached('+formals+',int reuse,double*cache){LOOP(nf){class_mean_face(i,'+args+',reuse,cache);}}\n'
-    return code[:match.start()]+helper+plain+cached
+    # Optional entry: callers must establish the canonical 1 mm physical
+    # wet/wet mask before selecting this shortcut. Leave face values untouched
+    # on skipped faces; the existing final flux mask still owns closure.
+    active=('ENTRY void matrix_bed_faces_active('+formals+',int reuse,double*cache){LOOP(nf){'
+        'int j=nb[i];if(j<0||q[owner[i]]<=.001||q[j]<=.001){'
+        'for(int k=0;k<3;++k)diagnostic[k*nf+i]=0.;continue;}'
+        'class_mean_face(i,'+args+',reuse,cache);}}\n')
+    return code[:match.start()]+helper+plain+cached+active
 
 def enable(engine,xp,nf):
     """Private scratch, not accepted state and not a public snapshot array."""
@@ -49,4 +56,4 @@ def enable(engine,xp,nf):
 def bind(engine):
     engine.fn['matrix_bed_faces']=engine.fn['matrix_bed_faces_cached']
 
-NAMES=('wave_state_gradients','matrix_bed_faces_cached')
+NAMES=('wave_state_gradients','matrix_bed_faces_cached','matrix_bed_faces_active')

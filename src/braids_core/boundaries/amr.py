@@ -157,8 +157,10 @@ class AMRHierarchy:
                     continue  # only the finer active side owns this subface
                 if n >= 0 and require_balance and abs(int(self.node_level[a])-int(self.node_level[b])) > 1:
                     raise ValueError('Adjacent AMR leaves differ by more than one level')
-                faces.append(replace(face, face_id=len(faces), owner=local[a],
-                                     neighbour=-1 if b < 0 else local[b]))
+                face_id=len(faces);face_owner=local[a];face_neighbour=-1 if b < 0 else local[b]
+                faces.append(face if (face.face_id==face_id and face.owner==face_owner and
+                    face.neighbour==face_neighbour) else replace(face,face_id=face_id,
+                    owner=face_owner,neighbour=face_neighbour))
         result = replace(self.finest, cells=tuple(cells), faces=tuple(faces))
         expected = self.meshes[0].metrics()['area_m2']
         audit = result.metrics()
@@ -184,6 +186,10 @@ class AMRHierarchy:
                 np.any(wanted != wanted.astype(int)) or np.any((wanted < 0) | (wanted >= self.levels)):
             raise ValueError(f'Each hierarchy node needs a requested level from zero to {self.finest_level}')
         wanted = wanted.astype(np.int64).copy()
+        # A one-level hierarchy has exactly one admissible complete partition.
+        # No face graph, neighbour grading or replacement mesh is needed to
+        # prove 2:1 balance. Validate the request above even in this case.
+        if self.levels==1:return self.roots
         # Breaklines are geometric constraints at the finest requested scale.
         # Pin both sides; their faces remain ordinary permeable interior faces.
         # Internal solid walls pin the adjoining fluid cells too. Ordinary
@@ -230,19 +236,16 @@ class AMRHierarchy:
         for _ in range(self.count+1):
             cover = self.leaf_cover(sorted(leaves))
             refine = set()
-            for level, mesh in enumerate(self.meshes):
+            for level, (owner,neighbour) in enumerate(self._level_neighbours):
                 base = self.offsets[level]
-                for face in mesh.faces:
-                    if face.neighbour < 0:
-                        continue
-                    a, b = cover[base+face.owner], cover[base+face.neighbour]
-                    if a < 0 or b < 0 or a == b:
-                        continue
-                    if abs(self.node_level[a]-self.node_level[b]) > 1:
-                        coarse = int(a if self.node_level[a] < self.node_level[b] else b)
-                        if self.node_level[coarse] >= self.maximum_level[coarse] or not self.children[coarse]:
-                            raise ValueError('AMR safety cap is incompatible with 2:1 balance')
-                        refine.add(coarse)
+                a,b=cover[base+owner],cover[base+neighbour]
+                keep=(a>=0)&(b>=0)&(a!=b);a,b=a[keep],b[keep]
+                la,lb=self.node_level[a],self.node_level[b];jump=abs(la-lb)>1
+                for coarse in np.unique(np.where(la<lb,a,b)[jump]):
+                    coarse=int(coarse)
+                    if self.node_level[coarse]>=self.maximum_level[coarse] or not self.children[coarse]:
+                        raise ValueError('AMR safety cap is incompatible with 2:1 balance')
+                    refine.add(coarse)
             if not refine:
                 return tuple(sorted(leaves))
             for node in sorted(refine):
@@ -252,19 +255,24 @@ class AMRHierarchy:
 
     def restrict(self, finest_values):
         """Area-weighted inventories; no concentration or bed-elevation averaging."""
-        finest_values = np.asarray(finest_values, dtype=float)
-        if finest_values.ndim < 1 or finest_values.shape[0] != len(self.finest.cells) or \
-                not np.isfinite(finest_values).all():
+        return self.restrict_many((finest_values,))[0]
+
+    def restrict_many(self, fields):
+        """Share geometry work, retaining each field's original dot/divide."""
+        fields=tuple(np.asarray(v,dtype=float) for v in fields)
+        if any(v.ndim<1 or v.shape[0]!=len(self.finest.cells) or not np.isfinite(v).all() for v in fields):
             raise ValueError('Finite data on every finest cell is required')
-        result = np.empty((self.count, *finest_values.shape[1:]), dtype=float)
-        result[self.offsets[-2]:] = finest_values
+        results=tuple(np.empty((self.count,*v.shape[1:]),dtype=float) for v in fields)
+        for result,value in zip(results,fields):result[self.offsets[-2]:]=value
         cells = self.cells
         for node in range(self.offsets[-2]-1, -1, -1):
             child = self.children[node]
             weights = np.array([cells[c].area_m2 for c in child])
             # Normalize by the sum of child areas to preserve constants at map-coordinate roundoff.
-            result[node] = np.tensordot(weights, result[list(child)], axes=(0, 0))/math.fsum(weights)
-        return result
+            ids=list(child);denominator=math.fsum(weights)
+            for result in results:
+                result[node]=np.tensordot(weights,result[ids],axes=(0,0))/denominator
+        return results
 
     def write_geometry(self, path):
         """Stable node polygons for output visualization and native state mapping."""

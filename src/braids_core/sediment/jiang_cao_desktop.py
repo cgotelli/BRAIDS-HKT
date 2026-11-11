@@ -211,7 +211,8 @@ def run(prepared, output, *, project, receipt, boundaries, restart=None, until=N
         validate(owner)
         adapter=SimpleNamespace(leaves=driver.leaves,owner=owner,hierarchy=t,
             geometry_sha256=driver.identity['geometry_sha256'],_mesh_cache=driver._meshes)
-        writer.write(adapter,fields(owner,reference[list(driver.leaves)]))
+        from braids_core.river_project import select_output_fields
+        writer.write(adapter,select_output_fields(fields(owner,reference[list(driver.leaves)]),project['settings']))
         solid,water=owner.totals(owner.state)
         row=dict(time_s=owner.time,steps=owner.steps,cells=len(driver.leaves),
             solid_residual_m3=solid+float(owner.xp.sum(owner.solid_integral))-owner.initial_solid,

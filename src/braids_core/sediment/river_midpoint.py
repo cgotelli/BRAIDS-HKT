@@ -13,12 +13,30 @@ from . import bend_native_hydraulics as native
 METHOD='implicit_fwave_midpoint_river_v1'
 
 
+_status_reduction=None
+
+
 def spatial_status_invalid(xp,statuses):
     """Check every resident status, with one GPU-to-host synchronization.
 
     Do not cache the result: every residual reconstructs the evolving iterate.
     Reductions retain each status array's own shape and integer dtype.
     """
+    # One generic resident reduction instead of eight independent reductions,
+    # a stack and a ninth reduction. Retain each input's signed integer dtype;
+    # all values (including negative failure codes) participate on every call.
+    if xp.__name__=='cupy' and len(statuses)==8:
+        global _status_reduction
+        if _status_reduction is None:
+            parameters=['A s0']
+            for j in range(1,8):parameters += [f'raw {chr(65+j)} s{j}',f'int64 n{j}']
+            expression='s0 != 0' + ''.join(f' || (_J < n{j} && s{j}[_J] != 0)' for j in range(1,8))
+            _status_reduction=xp.ReductionKernel(', '.join(parameters),'bool invalid',expression,
+                'a || b','invalid = a','false','river_spatial_status')
+        ordered=sorted(statuses,key=lambda s:s.size,reverse=True)
+        args=[ordered[0].ravel()]
+        for s in ordered[1:]:args += [s.ravel(),np.int64(s.size)]
+        return bool(_status_reduction(*args))
     return bool(xp.any(xp.stack([xp.any(s) for s in statuses])))
 
 
@@ -86,7 +104,10 @@ class RiverMidpoint:
         if not bool(xp.all(xp.isfinite(q))) or bool(xp.any(q[0]<0)):
             raise BendTrialRejected('Midpoint iterate is not finite/nonnegative')
         exterior=getattr(a,'exterior_bed',None)
-        if exterior is not None:exterior.evaluate(q,a.z,time=time)
+        if exterior is not None:
+            exterior.evaluate(q,a.z,time=time)
+            boundary_budget=getattr(self,'explicit_boundary_budget',None)
+            if boundary_budget is not None:boundary_budget.allocate(self.interval_base,dt)
         if a.backend=='cpu':
             # Same corrected native spatial prefix used by the explicit
             # owner, stopping BEFORE draining and its explicit CFL test.
@@ -142,8 +163,11 @@ class RiverMidpoint:
         g=p.g;n=p.n;nf=p.nf
         self.positive.launch('midpoint_inventory',n,n,float(dt),self.interval_base,g['area'],g['length'],
             g['offset'],g['faces'],g['signs'],water,self.theta)
+        boundary_budget=getattr(self,'explicit_boundary_budget',None)
+        saved_boundary=None if boundary_budget is None else boundary_budget.reserve(self.interval_base,dt,water,self.theta)
         self.positive.launch('midpoint_faces',nf,nf,n,p.parameters.dry,q,self.theta,
-            g['owner'],g['neighbour'],g['bid'],water,self.correction,self.status)
+            g['owner'],g['neighbour'],g['bid'] if boundary_budget is None else boundary_budget.limiter_bid,water,self.correction,self.status)
+        if boundary_budget is not None:boundary_budget.restore(water,self.correction,saved_boundary)
         if bool(xp.any(self.status)):raise BendTrialRejected('Prescribed boundary would exceed available water')
         self.positive.launch('midpoint_gather',n,n,nf,g['area'],g['length'],g['offset'],g['faces'],g['signs'],water,self.correction,rate)
         self.minimum_theta=min(self.minimum_theta,float(xp.min(self.theta)))

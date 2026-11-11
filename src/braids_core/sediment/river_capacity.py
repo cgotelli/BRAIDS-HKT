@@ -7,6 +7,7 @@ effective velocity, reconstruction and finite-layer ownership are unchanged.
 from copy import deepcopy
 from pathlib import Path
 import numpy as np
+from .braids_mpm import METHOD as BRAIDS_MPM, COEFFICIENTS as BRAIDS_MPM_COEFFICIENTS
 
 from braids_core.river_model import ModelError
 from .flow2dh_eh_operator import ClassicFlowEH
@@ -28,12 +29,16 @@ NAMES = ("split_capacity", "mixture", "scalar_probe", "scalar_forcing_probe", "s
          "intrinsic_forcing_probe", "intrinsic_grains", "vector_forcing_probe", "vector_wave_probe",
          "vr_sus_exchange", "total_capacity", "total_suspended_probe", "total_radial_probe",
          "settling_only_exchange", "skin_stress_probe", "intrinsic_skin_probe", "smart_capacity")
-WIRE_SIZE = 49
+WIRE_SIZE = 50
+METHODS[BRAIDS_MPM] = 4  # Existing general kernel, explicit new physical identity.
 
 
 def parameter_wire(capacity, bed_factor=1., *, solid_density=2650., water_density=1000.,
-                   viscosity=1.e-6, reference=None, skin_shear=None, diameter=None):
+                   viscosity=1.e-6, reference=None, skin_shear=None, diameter=None, espir=1.):
     method, p = capacity["method"], capacity["parameters"]
+    if method == BRAIDS_MPM:
+        if p:raise ValueError('BRAIDS standard MPM has fixed coefficients; no calibration parameters are accepted')
+        p = BRAIDS_MPM_COEFFICIENTS
     from .grain_diameter_contract import REQUIRED, validate_grain_sizes
     sizes = validate_grain_sizes(capacity, primary=diameter) if method in REQUIRED else {}
     # Immutable measured properties, shared by cell, face-wave and exterior laws.
@@ -107,8 +112,8 @@ def parameter_wire(capacity, bed_factor=1., *, solid_density=2650., water_densit
             raise ValueError("Only intrinsic capacities consume replaceable skin stress")
         skin = [1., skin_shear["sand_roughness_m"], skin_shear["viscosity_m2_s"]]
     wire = np.asarray([*values.values(), float(bed_factor), float(solid_density), relative,
-                       *extra, *intrinsic, *vector, *vr, *skin, *bulk], dtype=np.float64)
-    if not np.isfinite(wire).all() or bed_factor not in (0., 1.):
+                       *extra, *intrinsic, *vector, *vr, *skin, *bulk, float(espir)], dtype=np.float64)
+    if not np.isfinite(wire).all() or bed_factor not in (0., 1.) or isinstance(espir,(bool,np.bool_)) or espir<0.:
         raise ValueError("Invalid scalar formula coefficients")
     return wire
 
@@ -126,6 +131,7 @@ def capacity_source():
     # eqtran computes spiral-adjusted USTAR even if this class has zero
     # bedload. Its stress can still enter a neighbouring face correction.
     source = replace_once(source, "us>0.&&mag>0.?", "us>0.?")
+    source = replace_once(source, "12.5*(1.-sqrt(9.81)/(.4*c[i]))", "12.5*law_params[49]*(1.-sqrt(9.81)/(.4*c[i]))")
     source = replace_once(source, "ENTRY void split_capacity",
                           (HERE/"river_scalar_law.h").read_text()+"\n"+
                           (HERE/"river_skin_shear.h").read_text()+"\n"+
@@ -368,17 +374,17 @@ def wave_source(*, intrinsic=False, vector=False, vr1993=False, total=False, sma
 class ResolvedRiverCapacity(ClassicFlowEH):
     def __init__(self, backend, *, diameter, chezy, capacity, folder, threads=4, bed_factor=1.,
                  solid_density=2650., water_density=1000., viscosity=1.e-6, reference=None, transport="bedload",
-                 skin_shear=None):
+                 skin_shear=None, espir=1.):
         if transport not in ("bedload","split","total_load"):
             raise ValueError("Explicit bedload, split or total_load transport required")
-        if capacity['method'] in ('capacity.smart_jaggi','capacity.ancey_recking_2023','capacity.recking_2010','capacity.camenen_larson_2005','capacity.wong_parker_2006') and transport!='bedload':
+        if capacity['method'] in (BRAIDS_MPM,'capacity.smart_jaggi','capacity.ancey_recking_2023','capacity.recking_2010','capacity.camenen_larson_2005','capacity.wong_parker_2006') and transport!='bedload':
             raise ValueError('Selected published physical-drag law supports bedload only')
         from .river_total_load import ZERO_SUSPENDED
         self.total_load=transport=="total_load"
         self.algebraic_suspension=self.total_load and METHODS[capacity["method"]] not in ZERO_SUSPENDED
         self.surface_fraction=self.suspended_diameter=None
         wire = parameter_wire(capacity, bed_factor, solid_density=solid_density, water_density=water_density,
-                              viscosity=viscosity, reference=reference, skin_shear=skin_shear,diameter=diameter)
+                              viscosity=viscosity, reference=reference, skin_shear=skin_shear,diameter=diameter,espir=espir)
         super().__init__(backend, diameter=diameter, chezy=chezy, threads=threads)
         self.solid_density, self.water_density = float(solid_density), float(water_density)
         self.bed_factor = float(bed_factor)
@@ -394,7 +400,8 @@ class ResolvedRiverCapacity(ClassicFlowEH):
         self.is_recking_2010 = METHODS[capacity["method"]] == 103
         self.is_camenen_larson = METHODS[capacity["method"]] == 104
         self.is_wong_parker = METHODS[capacity["method"]] == 105
-        self.uses_physical_drag = self.is_smart_jaggi or self.is_ancey_recking or self.is_recking_2010 or self.is_camenen_larson or self.is_wong_parker
+        self.is_braids_mpm = capacity['method'] == BRAIDS_MPM
+        self.uses_physical_drag = self.is_braids_mpm or self.is_smart_jaggi or self.is_ancey_recking or self.is_recking_2010 or self.is_camenen_larson or self.is_wong_parker
         self.taurat = None
         self.grain_statistics = self.hydraulic_chezy = None
         self.wire = self.xp.asarray(wire)
@@ -409,7 +416,7 @@ class ResolvedRiverCapacity(ClassicFlowEH):
         self.engine = WaveEngine(backend, threads, source=path, names=NAMES)
         self.identity = dict(method=capacity["method"], parameters=deepcopy(capacity["parameters"]),
             grain_sizes_m=deepcopy(capacity.get('grain_sizes_m', {})),
-            backend=backend, diameter_m=self.d, chezy=self.c, bed_factor=self.bed_factor,
+            backend=backend, diameter_m=self.d, chezy=self.c, bed_factor=self.bed_factor, espir=float(wire[49]),
             solid_density_kg_m3=self.solid_density, water_density_kg_m3=self.water_density,
             relative_density=float(wire[14]),
             capacity_viscosity_m2_s=float(wire[15]),
@@ -448,6 +455,18 @@ class ResolvedRiverCapacity(ClassicFlowEH):
                 grading="one bulk material; measured Dm, D30 and D90; grading multiplier (D90/D30)^0.2",
                 applicability="energy slope 0.005..0.2; unclamped extrapolation elsewhere",
                 derivative="analytic physical-speed derivative plus -0.6*qb/h depth partial; frozen hydraulic drag")
+        if self.is_smart_jaggi:
+            self.identity.update(
+                hydraulic_drag='selected current cell-depth Manning/Chezy/White-Colebrook resistance; no face-pyramid average',
+                resistance_binding='physical_cell_resistance_smart111_v1')
+        if self.is_braids_mpm:
+            self.identity.update(source='BRAIDS standard MPM-like5/.055/1.5, calibrated BASEMENT Saiedi ST_2 reference',
+                fixed_coefficients=dict(BRAIDS_MPM_COEFFICIENTS),
+                capacity_stress='physical velocity and current cell-depth hydraulic resistance; theta=U^2/(C_hyd^2*Delta*D50)',
+                hydraulic_drag='selected cell-local Manning/Chezy/White-Colebrook resistance; no face-pyramid average',
+                grading='one measured D50; no extra form-drag, inferred D90 or sidewall partition',
+                applicability='noncohesive bulk bedload; calibrated Saiedi reproduction is not universal physical validation',
+                derivative='physical-speed derivative at frozen hydraulic resistance; existing general-law4 and physical-drag wave adapter')
         if self.is_ancey_recking:
             self.identity.update(source='Ancey & Recking (2023), DOI 10.1016/j.earscirev.2023.104571, Eq. 42',
                 capacity_stress='physical hydraulic total drag; theta=U^2/(C_hyd^2*Delta*d50)',
@@ -465,6 +484,8 @@ class ResolvedRiverCapacity(ClassicFlowEH):
         if self.is_camenen_larson:
             self.identity.update(source='Camenen & Larson (2005), DOI 10.1016/j.ecss.2004.10.019; authors CR-07-1 Eqs49,81',
                 capacity_stress='physical hydraulic total drag; theta=U^2/(C_hyd^2*Delta*D50)',
+                hydraulic_drag='selected current cell-depth Manning/Chezy/White-Colebrook resistance; no face-pyramid average',
+                resistance_binding='physical_cell_resistance_camenen124_v1',
                 grading='one grain: median D50; no external hiding or MPM form-drag multiplier',
                 critical_shields=float(wire[6]),critical_method='Soulsby & Whitehouse (1997), CR-07-1 Eq49',
                 applicability='noncohesive steady-current bedload; no waves, phase lag, mixture or suspension',
@@ -476,6 +497,25 @@ class ResolvedRiverCapacity(ClassicFlowEH):
                 critical_shields=.0495,coefficient=3.97,exponent=1.5,
                 applicability='lower-regime plane-bed equilibrium uniform sediment; no suspension or mixture',
                 derivative='analytic physical-speed derivative; zero explicit depth partial; frozen hydraulic bed drag')
+        if capacity['method']=='capacity.ashida_michiue_generalized':
+            self.identity.update(source='Locked Delft3D morphology_kernel trab14.f90, active TraFrm14; generalized Ashida-Michiue',
+                capacity_stress='FLOW effective sediment speed / sediment Chezy; theta=Ueff^2/(Csed^2*Delta*D50)',
+                grading='explicit D50; external hiding only when explicitly selected and qualified',
+                coefficient_role='ACal is the entire coefficient A; standard17, not17 times a multiplier',
+                form_drag='no additional MPM grain/form-drag reduction',
+                derivative='analytic effective-speed derivative at frozen depth, resistance, hiding and material',
+                suspended_channel='zero in trab14')
+        self.wang_minimum_working_depth=None
+        if capacity['method']=='capacity.wang_fredsoe':
+            self.wang_minimum_working_depth=2.5*capacity['grain_sizes_m']['d90']*np.exp(-6./2.5)
+            self.identity.update(source='Locked FLOW tran9t, active legacy test TraFrm13; literal coefficient and gravity convention retained',
+                capacity_stress='threshold: effective-speed grain friction; amplitude: independent characteristic shear velocity',
+                viscosity='VicMol in m2/s sets dstar and piecewise FLOW shld; not eddy viscosity',
+                suspended_channel='signed total-minus-bed diagnostic only in bedload transport; never added, clipped or advected',
+                grain_friction_domain='6+2.5*ln(hwork/(2.5*D90)) must be positive; hwork uses the existing1cm constitutive floor',
+                minimum_grain_friction_depth_m=float(self.wang_minimum_working_depth),
+                derivative='analytic effective-speed derivative at frozen depth, roughness and characteristic/effective-speed ratio',
+                provenance_limit='Source-consistent FLOW legacy variant, not independently identified with the full original EF1976 model')
         if self.is_vr1993:
             self.identity.update(reference_parameters=deepcopy(reference),
                 vr1993_source_sha256=digest(HERE/"river_vr1993.h"),
@@ -502,6 +542,11 @@ class ResolvedRiverCapacity(ClassicFlowEH):
                              (self.d90, (n,)), (self.hiding, (n,))):
             if not isinstance(value, xp.ndarray) or value.shape != shape or value.dtype != xp.float64 or not value.flags.c_contiguous:
                 raise ValueError("Resident contiguous FP64 scalar-capacity inputs required")
+        if (self.wang_minimum_working_depth is not None and self.wang_minimum_working_depth>=.01
+                and bool(xp.any(cq[0]<=self.wang_minimum_working_depth))):
+            raise ValueError('Wang-Fredsoe FLOW grain-friction logarithm requires working depth > '
+                f'{self.wang_minimum_working_depth:g}m for the selected D90. This coarse material reaches an unsupported shallow state; '
+                'choose a closure qualified for shallow grain-scale flow. Grain roughness is not silently clipped.')
         out, status = xp.zeros((6, n)), xp.empty(n, dtype=xp.int32)
         if self.taurat is None or self.taurat.shape != (n,):
             self.taurat = xp.zeros(n)

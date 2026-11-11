@@ -7,7 +7,20 @@ from braids_core.river_project import identity
 from . import workspace
 
 SCHEMA='braids.desktop-project.v1'
-SUFFIX='.braids.json'
+SUFFIX='.braidsproj'
+LEGACY_SUFFIX='.braids.json'
+
+
+def is_project(filename):
+    name=Path(filename).name.lower()
+    return name.endswith(SUFFIX) or name.endswith(LEGACY_SUFFIX)
+
+
+def project_name(filename):
+    name=Path(filename).name
+    for suffix in (SUFFIX,LEGACY_SUFFIX):
+        if name.lower().endswith(suffix):return name[:-len(suffix)]
+    return Path(filename).stem
 
 
 def default_file(root):
@@ -17,7 +30,7 @@ def default_file(root):
 
 def data_directory(filename):
     filename=Path(filename).resolve()
-    name=filename.name[:-len(SUFFIX)] if filename.name.endswith(SUFFIX) else filename.stem
+    name=project_name(filename)
     return filename.parent/(name+'_data')
 
 
@@ -36,7 +49,7 @@ def write(filename,root,document):
 def read(filename):
     filename=Path(filename).resolve();value=river_folder.read_json(filename.read_text(encoding='utf-8'))
     if not isinstance(value,dict) or set(value)!={'schema','data_folder','project'} or value['schema']!=SCHEMA:
-        raise ValueError('Choose a current BRAIDS .braids.json project file.')
+        raise ValueError('Choose a current BRAIDS project file.')
     relative=value['data_folder']
     if (not isinstance(relative,str) or not relative or PureWindowsPath(relative).drive or '\\' in relative
             or Path(relative).is_absolute() or '..' in relative.split('/')):raise ValueError('The project data folder must be a contained relative path.')

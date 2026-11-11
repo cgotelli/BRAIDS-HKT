@@ -14,10 +14,10 @@ def main(*, runtime):
     parser.add_argument('--smoke', action='store_true', help='Construct the UI and quit after event processing')
     args = parser.parse_args()
     app = QApplication(sys.argv[:1])
-    app.setOrganizationName('BRAIDS'); app.setApplicationName('BRAIDS-HKT');app.setApplicationDisplayName('BRAIDS-HKT')
+    app.setOrganizationName('BRAIDS'); app.setApplicationName('BRAIDS');app.setApplicationDisplayName('BRAIDS')
     if sys.platform=='win32':
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('BRAIDS.HKT')
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('BRAIDS.Desktop')
     from PySide6.QtGui import QIcon
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[1]/'BRAIDS_logo.png')))
     configure(app); apply_theme(app)

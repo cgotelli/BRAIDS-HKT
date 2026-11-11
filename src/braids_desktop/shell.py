@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QFrame, QLabel, QPushButton
     QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem, QStackedWidget,
     QPlainTextEdit, QProgressBar, QCheckBox, QTreeWidget, QTreeWidgetItem, QFileDialog,
     QMessageBox, QInputDialog, QDialog, QDialogButtonBox, QApplication, QButtonGroup, QComboBox, QAbstractButton,QMenuBar)
-from PySide6.QtWidgets import QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QScrollArea, QSizePolicy, QGraphicsEllipseItem, QGraphicsItem
 from braids_core.boundaries.domain import PolygonDomain, BoundaryAssignment
 from braids_core.river_project import load_project, identity
 from . import __version__, services,workspace,editor_state,project_file
@@ -37,7 +37,9 @@ class Task(QRunnable):
 
     def run(self):
         try: self.signals.done.emit(self.work())
-        except Exception as exc: self.signals.failed.emit(str(exc))
+        except Exception as exc:
+            message=str(exc).strip() or (type(exc).__name__+' (no diagnostic text was supplied)')
+            self.signals.failed.emit(message)
 
 
 class MainWindow(QMainWindow):
@@ -56,12 +58,15 @@ class MainWindow(QMainWindow):
         self._chain_run = False
         self._geometry_audits = []
         self.mode='model_run';self._live_run_allowed=None;self._results_output=None
+        from .geometry_undo import GeometryUndo
+        self.geometry_undo=GeometryUndo(self);self._last_geometry_guides=[]
         self._model_step='Domain';self._result_step='Probes';self.advanced_enabled=False;self._preview_after_prepare=False
+        self.structures_enabled=False;self._domain_warning_shown=False;self._assigning_edge=False;self._pending_boundary_config=None
         self.pool = QThreadPool(self)
         self.setMinimumSize(1100, 720); self.resize(1550, 960)
         self.setWindowFlags(Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinMaxButtonsHint|Qt.WindowSystemMenuHint)
         self.setContentsMargins(1,1,1,1)
-        self.setWindowTitle('BRAIDS-HKT');self.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[1]/'BRAIDS_logo.png')))
+        self.setWindowTitle('BRAIDS');self.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[1]/'BRAIDS_logo.png')))
         self.runner = DesktopRunner(self, runtime=runtime)
         self._build()
         from . import state_initialization
@@ -110,7 +115,7 @@ class MainWindow(QMainWindow):
         self.layer_section=AccordionSection('Map layers',expanded=True);nav.addWidget(self.layer_section)
         layer_layout=self.layer_section.body_layout
         self.layers = {}
-        for name in ('Terrain', 'Domain', 'Boundaries','Guide lines','Breaklines','Solids','Turbines','Roughness','Erodible depth','Mesh','Results','Profiles','Probes'):
+        for name in sorted(('Terrain', 'Domain', 'Boundaries','Guide lines','Breaklines','Solids','Turbines','Roughness','Erodible zones','Mesh','Results','Profiles','Probes'), key=str.casefold):
             check = QCheckBox(name); check.setChecked(True); check.toggled.connect(self._layer_visibility); layer_layout.addWidget(check); self.layers[name] = check
         self.splitter.addWidget(left)
         center = QWidget(); middle = QVBoxLayout(center); middle.setContentsMargins(0,0,0,0); middle.setSpacing(0)
@@ -131,9 +136,11 @@ class MainWindow(QMainWindow):
         self.coordinate = QLabel('Projected coordinates in metres'); self.coordinate.setContentsMargins(10,5,10,5); middle.addWidget(self.coordinate)
         self.map.coordinate.connect(self.coordinate.setText)
         self.map.geometry_changed.connect(self._geometry_changed)
-        self.map.edge_selection_changed.connect(lambda ids: self.map_hint.setText(f'{len(ids)} edge(s) selected. Ctrl-click adds/removes edges; Apply assigns the section.'))
+        self.map.bed_profile_drawn.connect(self.show_bed_profile)
+        self.map.edge_selection_changed.connect(self._edge_selected)
+        self.map.tool_changed.connect(self._boundary_tool_changed)
         for name,key in (('Scale','scale'),('North arrow','north'),('Legends','legends'),('Time','time')):
-            check=QCheckBox(name);check.setChecked(True);check.toggled.connect(lambda enabled,k=key:self._decoration(k,enabled));layer_layout.addWidget(check);self.layers[name]=check
+            check=QCheckBox(name);check.setChecked(True);check.toggled.connect(lambda enabled,k=key:self._decoration(k,enabled));self.layers[name]=check
         self.splitter.addWidget(center)
         right = QWidget(); right.setMinimumWidth(380); rbox = QVBoxLayout(right); rbox.setContentsMargins(8,12,8,8)
         self.step_title = QLabel('Domain'); self.step_title.setObjectName('Title'); rbox.addWidget(self.step_title)
@@ -147,7 +154,11 @@ class MainWindow(QMainWindow):
         self.map.breakline_edited.connect(self._breakline_edited)
         self.map.solid_edited.connect(self._solid_edited)
         self.map.zone_edited.connect(self._zone_edited)
+        self.map.feature_delete_requested.connect(self._delete_map_feature)
+        self.forms.breakline_list.currentIndexChanged.connect(
+            lambda _:self.map.highlight_breakline(self.forms.breakline_list.currentData()))
         self.results = ResultsPanel(map_view=self.map, parent=self)
+        self.results.geometry_edit_started.connect(self.geometry_undo.remember)
         self.map.results_panel=self.results;self.map.styles_changed.connect(self._appearance_changed)
         self.map_header_layout.insertWidget(0,self.results.map_controls,1);self.results.map_controls.hide()
         results_scroll=QScrollArea();results_scroll.setWidgetResizable(True);results_scroll.setWidget(self.results)
@@ -161,18 +172,29 @@ class MainWindow(QMainWindow):
         self.layers['Mesh'].toggled.connect(self.results.mesh.setChecked)
         self.history_tree=QTreeWidget(self);self.history_tree.hide()
         self.run_actions=QWidget();run_actions=QVBoxLayout(self.run_actions);run_actions.setContentsMargins(0,0,0,0)
-        self.live = QCheckBox('Show results while running'); self.live.setChecked(True);run_actions.addWidget(self.live)
-        self.live.toggled.connect(self._live_changed)
         actions = QHBoxLayout(); self.prepare_button = QPushButton('Prepare'); self.run_button = QPushButton('Run'); self.stop_button = QPushButton('Stop')
         self.run_button.setObjectName('Primary');self.stop_button.setObjectName('Stop'); self.stop_button.setEnabled(False)
         for button in (self.prepare_button,self.run_button): actions.addWidget(button)
         self.prepare_button.clicked.connect(self.prepare); self.run_button.clicked.connect(self.run); self.stop_button.clicked.connect(self.runner.stop)
         run_actions.addLayout(actions)
         self.forms.layouts['Run'].insertWidget(0,self.run_actions)
+        # Reporting controls belong with output choices, rather than alongside
+        # the execution commands.
+        self.report_actions=QWidget();report_actions=QVBoxLayout(self.report_actions);report_actions.setContentsMargins(0,12,0,0);report_actions.setSpacing(6)
+        report_title=QLabel('Report');report_title.setObjectName('Title');report_actions.addWidget(report_title)
+        self.live = QCheckBox('Show results while running');self.live.setChecked(True);report_actions.addWidget(self.live)
+        self.live.toggled.connect(self._live_changed)
+        self.result_storage_button=QPushButton('Select stored results…')
+        self.result_storage_button.setToolTip('Choose optional result-field groups saved at every output time. The selection changes saved frames only, never the numerical solution or checkpoints.')
+        self.result_storage_button.clicked.connect(self._choose_result_storage)
+        report_actions.addWidget(self.result_storage_button)
+        # Index 2 is immediately after the Run form (and therefore directly
+        # after its saved-state explanation), before general admission text.
+        self.forms.layouts['Run'].insertWidget(2,self.report_actions)
         self.splitter.addWidget(right); self.splitter.setSizes([205,850,490]); box.addWidget(self.splitter, 1)
         footer = QWidget();footer.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Fixed)
         bottom = QVBoxLayout(footer); bottom.setContentsMargins(10,5,10,6)
-        progress_row = QHBoxLayout(); self.status = QLabel('Ready Â· hydrodynamics only'); progress_row.addWidget(self.status,1)
+        progress_row = QHBoxLayout(); self.status = QLabel('Ready · hydrodynamics only'); progress_row.addWidget(self.status,1)
         self.progress = QProgressBar(); self.progress.setRange(0,1000); self.progress.setValue(0); self.progress.setMaximumWidth(300); progress_row.addWidget(self.progress)
         self.log_toggle = QPushButton('Execution log'); self.log_toggle.setCheckable(True); self.log_toggle.toggled.connect(lambda checked: self.log.setVisible(checked)); progress_row.addWidget(self.log_toggle)
         progress_row.addWidget(self.stop_button)
@@ -181,25 +203,121 @@ class MainWindow(QMainWindow):
         self.log.setContextMenuPolicy(Qt.CustomContextMenu);self.log.customContextMenuRequested.connect(self._log_menu)
         box.addWidget(footer)
 
+    def show_bed_profile(self, points):
+        """Display the transient terrain profile; it is never saved as geometry."""
+        if self.map.terrain is None:return
+        distance,elevation,locations=self.map.bed_profile.sampled(self.map.terrain.raster)
+        if len(distance)<2:return
+        import pyqtgraph as pg
+        dialog=QDialog(self);dialog.setWindowTitle('Bed profile');dialog.resize(720,520)
+        layout=QVBoxLayout(dialog)
+        plot=pg.PlotWidget();plot.setBackground('w')
+        plot.plot(distance,elevation,pen=pg.mkPen('#7a4a21',width=3),connect='finite')
+        plot.setLabel('bottom','Distance along profile','m');plot.setLabel('left','Bed elevation','m')
+        for axis in ('bottom','left'):
+            plot.getAxis(axis).setPen(pg.mkPen('#243746'));plot.getAxis(axis).setTextPen(pg.mkPen('#243746'))
+            # Elevation values are map elevations.  Do not let pyqtgraph turn
+            # them into a compact SI-prefix label such as km.
+            plot.getAxis(axis).enableAutoSIPrefix(False)
+        plot.showGrid(x=True,y=True,alpha=.22);plot.getPlotItem().getViewBox().setAspectLocked(True,ratio=1)
+        # The profile is a measurement aid: hovering its distance coordinate
+        # highlights the corresponding sampled DEM position without adding
+        # persistent geometry to the project.
+        marker=QGraphicsEllipseItem(-5,-5,10,10);marker.setPen(QPen(QColor('#b32222'),2));marker.setBrush(QColor('#ef5350'))
+        marker.setFlag(QGraphicsItem.ItemIgnoresTransformations);marker.setZValue(1000);marker.hide();self.map.scene().addItem(marker)
+        # Pair the map marker with a marker in the profile itself: both always
+        # refer to the same sampled terrain point.
+        profile_marker=pg.ScatterPlotItem(size=11,pen=pg.mkPen('#b32222',width=2),brush=pg.mkBrush('#ef5350'))
+        profile_marker.setZValue(1000);profile_marker.hide();plot.addItem(profile_marker)
+        viewbox=plot.getPlotItem().getViewBox()
+        def hover(scene_point):
+            point=viewbox.mapSceneToView(scene_point);x=float(point.x())
+            if x<distance[0] or x>distance[-1]:
+                marker.hide();profile_marker.hide();return
+            index=int(np.clip(np.searchsorted(distance,x),0,len(distance)-1))
+            if index and abs(distance[index-1]-x)<abs(distance[index]-x):index-=1
+            marker.setPos(self.map.to_scene(*locations[index]));marker.show();self.map.viewport().update()
+            profile_marker.setData([distance[index]],[elevation[index]]);profile_marker.show()
+        plot.scene().sigMouseMoved.connect(hover)
+        def remove_marker(*_):
+            if marker.scene() is not None:self.map.scene().removeItem(marker)
+            self.map.viewport().update()
+        dialog.finished.connect(remove_marker)
+        layout.addWidget(plot);dialog.exec()
+
+    def _choose_result_storage(self):
+        """Edit the explicit, optional frame inventory for the next run."""
+        if self.runner.is_running or self._tasks:
+            self.error('Finish the current operation before changing stored results.');return
+        dialog=QDialog(self);dialog.setWindowTitle('Stored results');dialog.resize(500,520)
+        layout=QVBoxLayout(dialog)
+        note=QLabel('Core hydraulics (depth, stage, bed elevation, speed, unit discharge and Froude) are always stored. Other groups are optional. This changes result files only; checkpoints retain the complete accepted state.');note.setWordWrap(True);layout.addWidget(note)
+        mandatory=QCheckBox('Core hydraulics — always stored');mandatory.setChecked(True);mandatory.setEnabled(False);layout.addWidget(mandatory)
+        try:
+            model=self.forms.hydraulic_model();sediment=model['physics']['sediment']
+        except Exception:
+            sediment=None
+        active={
+            'initial_bed': True,
+            'bedrock': sediment is not None,
+            'bedload': bool(sediment and sediment.get('transport') in ('bedload','total_load')),
+            'suspended': bool(sediment and sediment.get('suspension')!='off'),
+            'advanced_hydraulics': bool(self.forms.secondary.isChecked() or self.forms.turbulence.isChecked()),
+            'bank_and_collapse': bool(sediment and (sediment.get('banks')!='off' or sediment.get('avalanche')!='off')),
+            'boundary_ledgers': True,
+            'bedforms': bool(sediment and sediment.get('bedforms')!='off'),
+        }
+        choices=(
+            ('initial_bed','Initial bed elevation and bed change'),
+            ('bedrock','Non-erodible base and erodible-bed depth'),
+            ('bedload','Bedload vector, magnitude and capacity'),
+            ('suspended','Suspended mass and concentration'),
+            ('advanced_hydraulics','Secondary-flow state, intensity and dispersion flux'),
+            ('bank_and_collapse','Bank/collapse totals and retained failure history'),
+            ('boundary_ledgers','Boundary water and sediment ledgers'),
+            ('bedforms','Bedform geometry'),
+        )
+        boxes={}
+        for key,label in choices:
+            box=QCheckBox(label);box.setChecked(key in self.forms.output_fields and active[key])
+            if not active[key]:
+                box.setEnabled(False);box.setStyleSheet('color: #8a8a8a;')
+                box.setToolTip('Unavailable because the corresponding module is not active for this run.')
+            layout.addWidget(box);boxes[key]=box
+        turbine=QLabel('Turbine performance is written separately as its per-turbine CSV whenever turbines are active.');turbine.setWordWrap(True);layout.addWidget(turbine)
+        layout.addStretch()
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
+        if dialog.exec()!=QDialog.Accepted:return
+        self.forms.output_fields={key for key,box in boxes.items() if box.isChecked()}
+        self._changed()
+
     def _menus(self):
         def action(menu, label, callback, shortcut=None):
-            a = QAction(tr(label.replace('â€¦','').replace('...','')),self); a.triggered.connect(callback)
+            a = QAction(tr(label.replace('…','').replace('...','')),self); a.triggered.connect(callback)
             if shortcut: a.setShortcut(shortcut)
             menu.addAction(a); return a
         file = self.app_menu.addMenu(tr('File'))
         action(file,'New project',self.new_project,QKeySequence.New)
         action(file,'Open project',self.open_folder,QKeySequence.Open)
         self.recent_menu=file.addMenu(tr('Open recent'));self.recent_menu.aboutToShow.connect(self._recent_projects)
-        action(file,'Import current project JSONâ€¦',self.import_project)
+        action(file,'Import current project JSON…',self.import_project)
         action(file,'Save project',self.save,QKeySequence.Save)
         action(file,'Save project as',lambda:self.save(as_new=True),QKeySequence.SaveAs)
         action(file,'Edit project JSON',self.edit_project_json)
         action(file,'Reload project JSON',self.reload_project_json)
+        self.export_result_domain_action=action(file,'Export river-bank breaklines',self.results.export_current_bank_lines)
+        self.export_result_domain_action.setToolTip('Export the selected frame shoreline as permeable mesh breaklines. Import them from Mesh; the calculation domain stays unchanged.')
+        self.export_result_domain_action.setVisible(self.mode=='analyze')
         file.addSeparator(); action(file,'Exit',self.close,QKeySequence.Quit)
+        edit=self.app_menu.addMenu(tr('Edit'))
+        self.undo_geometry_action=action(edit,'Undo geometry edit',self.geometry_undo.undo,QKeySequence.Undo)
+        self.undo_geometry_action.setEnabled(False)
         tools = self.app_menu.addMenu(tr('Geometry'))
+        action(tools,'Import breaklines',lambda:self.geometry_action('import_breaklines'))
         for label,name in [('Import DEM','import_dem'),('Import domain','import_domain'),('Draw domain','draw_domain'),('Draw guide line','draw_guide'),('Import guide lines','import_guides'),('Edit domain vertices','edit_domain'),('Select boundary edges','select_edges'),('Export domain GeoJSON','export_domain')]:
             action(tools,label,lambda _,n=name:self.geometry_action(n))
-        self.extensions_menu=self.app_menu.addMenu(tr('Advanced'))
+        for label,name in [('Export mesh','export_mesh'),('Import mesh','import_mesh')]:action(tools,label,lambda _,n=name:self.geometry_action(n))
+        self.extensions_menu=self.app_menu.addMenu(tr('Modules'))
         self.hydrodynamics_action=QAction(tr('Advanced hydrodynamics'),self);self.hydrodynamics_action.setCheckable(True)
         self.hydrodynamics_action.toggled.connect(self._advanced_changed);self.extensions_menu.addAction(self.hydrodynamics_action)
         self.sediment_action=QAction(tr('Sediment transport'),self);self.sediment_action.setCheckable(True)
@@ -208,7 +326,13 @@ class MainWindow(QMainWindow):
         self.turbine_action=QAction(tr('Hydrokinetic turbines'),self);self.turbine_action.setCheckable(True)
         self.turbine_action.toggled.connect(self.forms.turbines.enabled.setChecked);self.extensions_menu.addAction(self.turbine_action)
         self.forms.turbines.enabled.toggled.connect(self._turbine_extension_changed)
+        self.structures_action=QAction(tr('Hydraulic structures'),self);self.structures_action.setCheckable(True)
+        self.structures_action.toggled.connect(self._structures_changed);self.extensions_menu.addAction(self.structures_action)
         view = self.app_menu.addMenu(tr('View'))
+        layer_menu=view.addMenu(tr('All map layers'))
+        for name,check in self.layers.items():
+            item=QAction(tr(name),self);item.setCheckable(True);item.setChecked(check.isChecked())
+            item.toggled.connect(check.setChecked);check.toggled.connect(item.setChecked);layer_menu.addAction(item)
         action(view,'Fit terrain',self.map.fit_domain)
         action(view,'Fit domain',lambda:self.geometry_action('zoom_domain'))
         self.extrema_actions={}
@@ -218,8 +342,11 @@ class MainWindow(QMainWindow):
             a.toggled.connect(lambda enabled,k=key:self.results.set_extremum(k,enabled))
             view.addAction(a);self.extrema_actions[key]=a
         self.smooth_action=QAction(tr('Smooth results'),self);self.smooth_action.setCheckable(True)
-        self.smooth_action.setToolTip('Join nearby wet-cell tips with straight shoreline segments and use linear colors. Solid and domain walls keep their exact mesh shape. Display only: probes and CSV always use raw results.')
+        self.smooth_action.setToolTip('Interpolate colors continuously between cells with vector shading clipped to the domain. Works with terrain-aware wet/dry display. Probes and CSV use saved cell values.')
         self.smooth_action.setChecked(settings().value('map/smooth_results',True,type=bool));self.smooth_action.toggled.connect(self._smooth_changed);view.addAction(self.smooth_action)
+        self.terrain_wetting_action=QAction(tr('Terrain-aware wet/dry display'),self);self.terrain_wetting_action.setCheckable(True)
+        self.terrain_wetting_action.setToolTip('Display-only, volume-conserving reconstruction of a smooth shoreline over locally planar terrain. It does not change water, sediment, probes, exports or the solver.')
+        self.terrain_wetting_action.setChecked(settings().value('map/terrain_aware_wetting',False,type=bool));self.terrain_wetting_action.toggled.connect(self._terrain_wetting_changed);view.addAction(self.terrain_wetting_action)
         self.flow_lines_action=QAction(tr('Flow particle tracks'),self);self.flow_lines_action.setCheckable(True)
         self.flow_lines_action.toggled.connect(self.results.set_particles);view.addAction(self.flow_lines_action)
         background=view.addMenu(tr('Map background'));self.background_group=QActionGroup(self);self.background_actions={}
@@ -228,6 +355,7 @@ class MainWindow(QMainWindow):
             item.triggered.connect(lambda _,v=key:self.set_background(v));self.background_actions[key]=item
         preferences=self.app_menu.addMenu(tr('Settings'));action(preferences,'Preferences',self.edit_settings)
         help_menu = self.app_menu.addMenu(tr('Help'))
+        action(help_menu,'Turbines parameters guide',lambda:self.forms.turbines.guide_button.click())
         action(help_menu,'Open demo',self.open_demo)
         action(help_menu,'Quick start',self.quick_start)
         action(help_menu,'About BRAIDS',lambda:QMessageBox.information(self,'BRAIDS',
@@ -249,14 +377,15 @@ class MainWindow(QMainWindow):
                   self.forms.turbines.enabled.isChecked() and bool(self.forms.turbines.rows))
         if self.mode=='analyze' and not turbines:names=[n for n in names if n!='Turbines']
         if not self.advanced_enabled:names=[n for n in names if n!='Advanced hydrodynamics']
+        if not self.structures_enabled:names=[n for n in names if n!='Hydraulic structures']
         if self.mode=='model_run' and not self.forms.turbines.enabled.isChecked():names=[n for n in names if n!='Hydrokinetic turbines']
         from .sediment_workflow import STEPS
         if not self.forms.physics.enabled.isChecked():names=[n for n in names if n not in STEPS]
         self.workflow.blockSignals(True);self.workflow.clear()
         number=0
         for name in names:
-            if name!='Advanced hydrodynamics':number+=1
-            text=(('03a  ' if name=='Advanced hydrodynamics' else f'{number:02}  ') if self.mode=='model_run' else '')+tr(name)
+            number+=1
+            text=(f'{number:02}  ' if self.mode=='model_run' else '')+tr(name)
             if name=='Advanced hydrodynamics':text=text.replace('Advanced ','Advanced\n       ',1)
             item=QListWidgetItem(text);item.setToolTip(tr(name));item.setData(Qt.UserRole,name);self.workflow.addItem(item)
         self.workflow.setCurrentRow(names.index(selected) if selected in names else 0);self.workflow.blockSignals(False)
@@ -264,6 +393,9 @@ class MainWindow(QMainWindow):
 
     def set_mode(self,mode):
         self.mode=mode;analyze=mode=='analyze'
+        if hasattr(self,'export_result_domain_action'):
+            self.export_result_domain_action.setVisible(analyze)
+            self.export_result_domain_action.setEnabled(analyze and self._can_view_results())
         self.model_button.setChecked(not analyze);self.analyze_button.setChecked(analyze)
         self.workflow_title.setText(tr('RESULTS' if analyze else 'MODEL WORKFLOW'))
         self.results.map_controls.setVisible(analyze);self.layers['Results'].setVisible(analyze)
@@ -292,17 +424,47 @@ class MainWindow(QMainWindow):
     def _extension_changed(self,enabled):
         if hasattr(self,'sediment_action'):
             self.sediment_action.blockSignals(True);self.sediment_action.setChecked(enabled);self.sediment_action.blockSignals(False)
-        self._refresh_navigation()
+        self._refresh_navigation();self._refresh_layer_availability()
 
     def _turbine_extension_changed(self,enabled):
         self.turbine_action.blockSignals(True);self.turbine_action.setChecked(enabled);self.turbine_action.blockSignals(False)
-        self._refresh_navigation();self._changed()
+        self._refresh_navigation();self._refresh_layer_availability();self._changed()
 
     def _advanced_changed(self,enabled):
         self.advanced_enabled=enabled
         if not enabled:
             self.forms.secondary.setChecked(False);self.forms.turbulence.setChecked(False)
         self._refresh_navigation();self._changed()
+
+    def _structures_changed(self,enabled):
+        if not enabled and self.forms.solid_list.count():
+            self.structures_action.blockSignals(True);self.structures_action.setChecked(True);self.structures_action.blockSignals(False)
+            self.status.setText('Remove the existing solids before disabling Hydraulic structures.')
+            return
+        self.structures_enabled=enabled;self._refresh_navigation();self._refresh_layer_availability();self._changed()
+
+    def _refresh_layer_availability(self):
+        """Show optional-map layers only when their owning feature is active."""
+        if not hasattr(self,'layers'):return
+        visible={
+            'Turbines':self.forms.turbines.enabled.isChecked(),
+            'Solids':self.structures_enabled,
+            'Erodible zones':self.forms.physics.enabled.isChecked(),
+        }
+        for name,enabled in visible.items():
+            check=self.layers[name];check.setVisible(enabled)
+            if not enabled:check.setChecked(False)
+
+    def _edge_selected(self,ids):
+        if self._assigning_edge and len(ids)==1:
+            self._assigning_edge=False
+            try:self._assign_boundary();self.map.set_tool('pan')
+            except Exception as exc:self._pending_boundary_config=None;self.map.set_tool('pan');self.error(exc)
+
+    def _boundary_tool_changed(self,tool):
+        if tool=='delete':self.status.setText('Click the feature to delete. Right-click or Escape cancels.')
+        if tool!='boundary' and self._assigning_edge:
+            self._assigning_edge=False;self._pending_boundary_config=None
 
     def _can_view_results(self):
         if self.results.store is not None:return True
@@ -319,12 +481,13 @@ class MainWindow(QMainWindow):
     def _translate_widgets(self):
         for widget in self.findChildren(QWidget):
             if not isinstance(widget,(QLabel,QAbstractButton)):continue
-            text=widget.text();widget.setText(tr(text.replace('â€¦','').replace('...','').replace('_',' ')))
+            text=widget.text();widget.setText(tr(text.replace('…','').replace('...','').replace('_',' ')))
         for widget in self.findChildren(QComboBox):
             if widget in (self.forms.boundary_editor.boundary,self.results.boundary):continue
             for i in range(widget.count()):widget.setItemText(i,tr(widget.itemText(i).replace('_',' ')))
 
     def _changed(self):
+        if self.sender() is self.forms and getattr(getattr(self,'_inspection_lock',None),'active',False):return
         if not self._loading:
             try:self.map.set_turbines(self.forms.turbines.value())
             except (ValueError,TypeError,KeyError):pass
@@ -343,9 +506,9 @@ class MainWindow(QMainWindow):
         except (KeyError,TypeError,ValueError):return None
 
     def _title(self):
-        name=(self.project_file.name[:-len(project_file.SUFFIX)] if self.project_file else self.project_root.name if self.project_root else 'Unsaved project')
-        self.setWindowTitle('BRAIDS â€” '+name)
-        self.title_bar.title.setText('BRAIDS â€” '+name+(' *' if self.dirty else ''))
+        name=(project_file.project_name(self.project_file) if self.project_file else self.project_root.name if self.project_root else 'Unsaved project')
+        self.setWindowTitle('BRAIDS — '+name)
+        self.title_bar.title.setText('BRAIDS — '+name+(' *' if self.dirty else ''))
         self.results.project_name=name
         self.project_label.setText(name)
         self.project_label.setToolTip(str(self.project_root or 'Choose a folder when saving'))
@@ -358,7 +521,7 @@ class MainWindow(QMainWindow):
     def _recent_projects(self):
         self.recent_menu.clear()
         for filename in settings().value('projects/recent',[],type=list):
-            path=Path(filename);action=self.recent_menu.addAction(path.name+' â€” '+str(path.parent))
+            path=Path(filename);action=self.recent_menu.addAction(path.name+' — '+str(path.parent))
             action.setEnabled(path.is_file());action.triggered.connect(lambda _,p=path:self.open_path(p))
         if self.recent_menu.isEmpty():self.recent_menu.addAction('No recent projects').setEnabled(False)
         else:
@@ -442,12 +605,14 @@ class MainWindow(QMainWindow):
 
     def new_project(self, checked=False, *, confirm=True):
         if confirm and not self._confirm_replace():return
+        self.geometry_undo.clear();self._last_geometry_guides=[]
         self._clear_results()
         self.forms.restart.clear()
         self.project_root = self.prepared = None; self.has_domain = False; self._geometry_audits=[]
         self._preview_key=None;self._preview_attempt=None;self._preview_current=False
         self.project_file=None;self._project_file_sha=None;self._pending_project_file=None;self._watch_project()
         self.advanced_enabled=False;self._model_step='Domain';self._result_step='Probes'
+        self.structures_enabled=False;self._domain_warning_shown=False;self._assigning_edge=False
         self.history_tree.clear()
         doc = services.default_document('SELECT_DEM.tif',[[0,0],[100,0],[100,50],[0,50]],'EPSG:2056')
         doc['initial']['stage_m']=-1e7
@@ -462,6 +627,8 @@ class MainWindow(QMainWindow):
             self.document_base=deepcopy(doc); self.forms.load_document(doc)
             self.advanced_enabled=self.advanced_enabled or self.forms.secondary.isChecked() or self.forms.turbulence.isChecked()
             self.hydrodynamics_action.blockSignals(True);self.hydrodynamics_action.setChecked(self.advanced_enabled);self.hydrodynamics_action.blockSignals(False)
+            self.structures_enabled=self.structures_enabled or bool(doc['settings']['solids'])
+            self.structures_action.blockSignals(True);self.structures_action.setChecked(self.structures_enabled);self.structures_action.blockSignals(False)
             self._display_domain(doc)
             self._extension_changed(self.forms.physics.enabled.isChecked())
             self._turbine_extension_changed(self.forms.turbines.enabled.isChecked())
@@ -470,11 +637,15 @@ class MainWindow(QMainWindow):
         self._title(); self._layer_visibility()
 
     def _display_domain(self, doc):
-        if self.map.terrain and self.has_domain:
+        if self.map.terrain:
             domain=PolygonDomain(**doc['settings']['domain']);self.map.domain_edges=list(domain.edges)
-            self.map.set_release([(np.asarray(domain.vertices_xy),[])])
+            self.map.boundary_reference_rings=[(np.asarray(domain.vertices_xy),[])]
+            if self.has_domain:
+                self.map.set_release([(np.asarray(domain.vertices_xy),[])])
+            else:self.map.set_release([])
             self.map.set_boundaries(doc['settings']['assignments'],selected=[])
             self.map.set_breaklines(doc['settings']['breaklines'])
+            self.map.highlight_breakline(self.forms.breakline_list.currentData())
             self.map.set_solids(doc['settings']['solids'])
             self.map.set_zones(doc['material_zones'])
             self.map.set_turbines(doc.get('power_plan',{}).get('layout',doc['turbines']))
@@ -490,10 +661,10 @@ class MainWindow(QMainWindow):
         return self.forms.document(self.document_base,validate=validate)
 
     def _new_folder(self):
-        selected,_=QFileDialog.getSaveFileName(self,'Save BRAIDS project',str(self.project_file or (self.project_root.parent if self.project_root else Path.home()/'Documents')/('River'+project_file.SUFFIX)),'BRAIDS project (*.braids.json)')
+        selected,_=QFileDialog.getSaveFileName(self,'Save BRAIDS project',str(self.project_file or (self.project_root.parent if self.project_root else Path.home()/'Documents')/('River'+project_file.SUFFIX)),'BRAIDS project (*.braidsproj)')
         if not selected:return None
         filename=Path(selected).resolve()
-        if not filename.name.endswith(project_file.SUFFIX):filename=filename.with_name(filename.name+project_file.SUFFIX)
+        if not project_file.is_project(filename):filename=filename.with_name(filename.name+project_file.SUFFIX)
         root=project_file.data_directory(filename)
         if filename.exists() or (root.exists() and any(root.iterdir())):raise ValueError('Choose a new project filename. Use Open project to resume an existing file.')
         root.mkdir(parents=True,exist_ok=True);self._pending_project_file=filename
@@ -519,14 +690,15 @@ class MainWindow(QMainWindow):
         task.signals.done.connect(lambda value:complete(value)); task.signals.failed.connect(lambda error:complete(error=error)); self.pool.start(task)
 
     def error(self, error):
-        self.status.setText('Action needs attention'); self.log.appendPlainText('ERROR: '+str(error))
+        detail=str(error).strip() or (type(error).__name__+' (no diagnostic text was supplied)')
+        self.status.setText('Action needs attention'); self.log.appendPlainText('ERROR: '+detail)
         # Validation can fail before a worker/log file exists. Keep those
         # actionable messages alongside the project as well as in the panel.
         try:
             folder=(self.project_root/'logs') if self.project_root is not None else self.runtime.parent/'evidence'
             folder.mkdir(parents=True,exist_ok=True)
             with (folder/'desktop_errors.log').open('a',encoding='utf-8') as stream:
-                stream.write(datetime.now().astimezone().isoformat()+' ERROR: '+str(error)+'\n')
+                stream.write(datetime.now().astimezone().isoformat()+' ERROR: '+detail+'\n')
         except OSError as exc:self.log.appendPlainText('Could not persist this error to disk: '+str(exc))
         self.log_toggle.setChecked(True)
 
@@ -535,7 +707,7 @@ class MainWindow(QMainWindow):
 
     def open_folder(self):
         if not self._confirm_replace():return
-        filename,_=QFileDialog.getOpenFileName(self,'Open BRAIDS project',str(self.project_file or self.project_root or Path.home()),'BRAIDS project (*.braids.json braids_project.json)')
+        filename,_=QFileDialog.getOpenFileName(self,'Open BRAIDS project',str(self.project_file or self.project_root or Path.home()),'BRAIDS project (*.braidsproj *.braids.json braids_project.json)')
         if filename:self.open_path(Path(filename),confirmed=True)
 
     def import_project(self):
@@ -551,7 +723,7 @@ class MainWindow(QMainWindow):
         if not confirmed and not self._confirm_replace():return
         path=Path(path).resolve()
         def read():
-            public=path.name.endswith(project_file.SUFFIX) and path.is_file();changed=False
+            public=project_file.is_project(path) and path.is_file();changed=False
             from braids_core.river_folder import MANIFEST_FILE,PROJECT_FILE
             root=path if path.is_dir() else path.parent if path.name==PROJECT_FILE and (path.parent/MANIFEST_FILE).is_file() and not destination else None
             if public:root,doc,draft,changed=project_file.read(path)
@@ -570,6 +742,7 @@ class MainWindow(QMainWindow):
             if draft:session['desktop']=draft['session'].get('desktop',{})
             return doc,terrain,session,draft,root,public,changed
         def loaded(value):
+            self.geometry_undo.clear();self._last_geometry_guides=[]
             self._clear_results();self.forms.restart.clear()
             doc,terrain,session,draft,root,public,changed=value
             self.project_root=Path(destination) if destination else root; self.prepared=None; self.has_domain=draft['has_domain'] if draft else True
@@ -579,6 +752,8 @@ class MainWindow(QMainWindow):
             desktop_state=session.get('desktop',{})
             self.map.styles=deepcopy(desktop_state.get('map_styles',{}))
             self.advanced_enabled=bool(desktop_state.get('advanced_hydrodynamics',False))
+            self.structures_enabled=bool(desktop_state.get('hydraulic_structures',False))
+            self._domain_warning_shown=False
             self._model_step=desktop_state.get('model_step','Domain');self._result_step=desktop_state.get('result_step','Probes')
             if terrain:self.map.set_terrain(terrain,[])
             else:self.map.clear()
@@ -591,13 +766,14 @@ class MainWindow(QMainWindow):
             if not changed and session.get('prepared') and self.project_root:self.prepared=self.project_root/session['prepared']
             desktop_state=session.get('desktop',{})
             self.map.set_sketch_lines(desktop_state.get('guides',[]))
+            self._last_geometry_guides=deepcopy(self.map.sketch_lines)
             self._geometry_audits=deepcopy(desktop_state.get('geometry_reviews',[]))
             # Opening a project is never consent to resume an earlier run.
             self.forms.restart.clear()
             self._live_run_allowed=None;self.set_mode('model_run')
             self.live.setChecked(bool(desktop_state.get('live_results',True)))
             self.dirty=not path.is_dir(); self._title()
-            self.status.setText('Project loaded Â· review settings, then Prepare')
+            self.status.setText('Project loaded · review settings, then Prepare')
             self.map_hint.setText('Left: workflow and layers. Right: settings. Right-click exits drawing/editing. Ctrl-click selects multiple boundary edges.')
             if session.get('output') and self.project_root:
                 output=self.project_root/session['output']
@@ -608,9 +784,9 @@ class MainWindow(QMainWindow):
             if measurements and measurements.get('schema')==2:self.results.set_measurement_state(measurements)
             self.dirty=changed or self.project_root is None;self._title();self._watch_project()
             if public:self._remember_project(path)
-            if draft and draft['issue']:self.status.setText('Draft loaded Â· settings will be checked on Prepare')
+            if draft and draft['issue']:self.status.setText('Draft loaded · settings will be checked on Prepare')
             if destination:self.save()
-        try:self._background(read,loaded,'Opening project and terrainâ€¦')
+        try:self._background(read,loaded,'Opening project and terrain…')
         except Exception as exc:self.error(exc)
 
     def save(self, checked=False, *, as_new=False, then=None):
@@ -635,7 +811,10 @@ class MainWindow(QMainWindow):
                 from .sediment_workflow import first_error
                 doc=deepcopy(self.document_base);issue=first_error(exc)
             filename=self._pending_project_file if self._pending_project_file and project_file.data_directory(self._pending_project_file)==root else self.project_file if root==self.project_root and self.project_file else project_file.default_file(root)
-            doc['terrain']['dem_path']=self.forms.dem_path.text();doc['name']=filename.name[:-len(project_file.SUFFIX)]
+            if not as_new and filename.name.lower().endswith(project_file.LEGACY_SUFFIX):
+                modern=filename.with_name(project_file.project_name(filename)+project_file.SUFFIX)
+                if not modern.exists():filename=modern
+            doc['terrain']['dem_path']=self.forms.dem_path.text();doc['name']=project_file.project_name(filename)
             if issue is None:
                 try:
                     if not self.map.terrain or not self.has_domain:raise ValueError('Import a DEM and define the calculation domain before Prepare or Run.')
@@ -649,7 +828,7 @@ class MainWindow(QMainWindow):
             session['restart']=Path(restart).resolve().relative_to(root).as_posix() if restart and Path(restart).is_file() else ''
             session['desktop']=dict(guides=[np.asarray(line).tolist() for line in self.map.sketch_lines],
                 geometry_reviews=deepcopy(self._geometry_audits),measurements=self.results.measurement_state(),live_results=self.live.isChecked(),
-                advanced_hydrodynamics=self.advanced_enabled,model_step=self._model_step,result_step=self._result_step,
+                advanced_hydrodynamics=self.advanced_enabled,hydraulic_structures=self.structures_enabled,model_step=self._model_step,result_step=self._result_step,
                 map_styles=deepcopy(self.map.styles))
             has_terrain=self.map.terrain is not None;has_domain=self.has_domain
             def write():
@@ -665,13 +844,13 @@ class MainWindow(QMainWindow):
                     self.document_base['terrain']['dem_path']=str(workspace.member(root,value['document']['terrain']['dem_path']))
                     self.forms.dem_path.setText(self.document_base['terrain']['dem_path'])
                 self.forms._base=deepcopy(self.document_base);self.dirty=False;self._title();self._watch_project();self._remember_project(filename)
-                self.status.setText('Draft saved Â· settings will be checked on Prepare' if issue else 'Project, inputs and settings saved')
+                self.status.setText('Draft saved · settings will be checked on Prepare' if issue else 'Project, inputs and settings saved')
                 if then:
                     if issue:
                         self._chain_run=False;self._preview_after_prepare=False;self._live_run_allowed=None
                         self.error('Draft saved. Correct this before Prepare or Run:\n'+issue)
                     else:then()
-            self._background(write,saved,'Saving project and local inputsâ€¦')
+            self._background(write,saved,'Saving project and local inputs…')
             return True
         except Exception as exc:self.error(exc);return False
 
@@ -713,7 +892,7 @@ class MainWindow(QMainWindow):
             self.log.appendPlainText(message)
             if not self.runner.is_running:self.status.setText(message)
         prepared=self.prepared
-        self._mesh_read(lambda:services.prepared_mesh(prepared),shown,'Loading prepared mesh previewâ€¦')
+        self._mesh_read(lambda:services.prepared_mesh(prepared),shown,'Loading prepared mesh preview…')
 
     def _mesh_read(self,work,done,label):
         if not self.runner.is_running and not self._tasks:return self._background(work,done,label)
@@ -760,7 +939,7 @@ class MainWindow(QMainWindow):
             def shown(polygons):
                 if polygons is not None and root==self.project_root and key==self._mesh_key():
                     self.map.show_preview_mesh(polygons);self._preview_key=key;self._preview_current=True;self._layer_visibility()
-            self._mesh_read(read,shown,'Loading saved initial meshâ€¦')
+            self._mesh_read(read,shown,'Loading saved initial mesh…')
 
     def run(self):
         from .state_initialization import is_source,import_checkpoint
@@ -797,11 +976,14 @@ class MainWindow(QMainWindow):
 
     def _busy(self,busy):
         self.results.set_live_output(self.runner.output if self.runner.action=='run' else None)
-        for name,page in self.forms.pages.items():
-            if name!='Run':page.setEnabled(not busy)
-        for i in range(self.forms.run_form.count()):
-            widget=self.forms.run_form.itemAt(i).widget()
-            if widget:widget.setEnabled(not busy)
+        if not hasattr(self,'_inspection_lock'):
+            from .model_inspection import ModelInspectionLock
+            self._inspection_lock=ModelInspectionLock(self.forms)
+            self._inspection_note=QLabel(tr('Read-only while processing. You can inspect all model settings.'))
+            self._inspection_note.setWordWrap(True)
+            self.forms.layout().insertWidget(0,self._inspection_note)
+        self._inspection_lock.set_locked(busy)
+        self._inspection_note.setVisible(busy)
         for widget in (self.prepare_button,self.run_button,self.live,self.extensions_menu):widget.setEnabled(not busy)
         if self._chain_run:self.live.setEnabled(False)
         self.results.setEnabled(self._can_view_results())
@@ -820,6 +1002,7 @@ class MainWindow(QMainWindow):
         self.status.setText(message)
         if action=='prepare' and not success:self.prepared=None
         if action=='prepare' and success:
+            self._clear_results()
             self.prepared=self.runner.output
             if self._chain_run:QTimer.singleShot(0,self._start_run)
             elif self._preview_after_prepare:QTimer.singleShot(0,self._show_prepared_mesh)
@@ -897,7 +1080,7 @@ class MainWindow(QMainWindow):
                 self.map.set_sketch_lines(session.get('guides',[]));self._geometry_audits=session.get('geometry_reviews',[])
                 self.dirty=True;self._title();self.workflow.setCurrentRow(0)
                 self.status.setText('Saved parameters restored into editor. Save creates a new revision; earlier history remains intact.')
-            self._background(read,restored,'Reading authenticated saved revisionâ€¦')
+            self._background(read,restored,'Reading authenticated saved revision…')
         except Exception as exc:self.error(exc)
 
     def use_history_checkpoint(self):
@@ -934,7 +1117,7 @@ class MainWindow(QMainWindow):
         from .demo import create_river_demo
         root=self.runtime.parent/'test_projects'/('demo_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
         def done(_):self.dirty=False; self.open_path(root,confirmed=True)
-        try:self._background(lambda:create_river_demo(root),done,'Copying the natural-river demonstration inputsâ€¦')
+        try:self._background(lambda:create_river_demo(root),done,'Copying the natural-river demonstration inputs…')
         except Exception as exc:self.error(exc)
 
     def _layer_visibility(self):
@@ -945,7 +1128,7 @@ class MainWindow(QMainWindow):
         for item in self.map.breakline_items:item.setVisible(self.layers['Breaklines'].isChecked())
         for item in self.map.solid_items:item.setVisible(self.layers['Solids'].isChecked())
         for item in self.map.turbine_items:item.setVisible(self.layers['Turbines'].isChecked())
-        for kind,name in (('roughness','Roughness'),('erodible','Erodible depth')):
+        for kind,name in (('roughness','Roughness'),('erodible','Erodible zones')):
             for item in self.map.zone_items[kind]:item.setVisible(self.layers[name].isChecked())
         self.results.measurements_visible={'profile':self.layers['Profiles'].isChecked(),'gauge':self.layers['Probes'].isChecked()}
         self.results._draw_measurements()
@@ -958,8 +1141,12 @@ class MainWindow(QMainWindow):
             self.map.preview_mesh_item.setVisible(not analyze and self.layers['Mesh'].isChecked() and getattr(self,'_preview_current',False))
         smooth_ready=getattr(getattr(self,'results',None),'_smooth_ready',False)
         for key,item in (('Results',getattr(getattr(self,'results',None),'_field_item',None)),('Mesh',getattr(getattr(self,'results',None),'_mesh_item',None))):
-            if item is not None and isValid(item):item.setVisible(analyze and self.layers[key].isChecked())
-        if self.results._field_item is not None and isValid(self.results._field_item) and smooth_ready:self.results._field_item.hide()
+            if item is not None and isValid(item):item.setVisible(analyze and self.layers[key].isChecked() and (key!='Mesh' or self.results.mesh.isChecked()))
+        terrain_item=getattr(getattr(self,'results',None),'_terrain_item',None)
+        if terrain_item is not None and isValid(terrain_item):
+            terrain_item.setVisible(analyze and self.layers['Results'].isChecked() and self.results.terrain_aware_wetting and bool(terrain_item.paths))
+        # Native polygons remain the fallback below the continuous vector
+        # shading, including explicitly opaque dry/zero-valued cells.
         if self.results._smooth_item is not None and isValid(self.results._smooth_item):self.results._smooth_item.setVisible(analyze and self.layers['Results'].isChecked() and smooth_ready)
         self.map.result_visible=analyze and self.layers['Results'].isChecked()
         self.results.set_extrema_visible(self.map.result_visible)
@@ -980,6 +1167,10 @@ class MainWindow(QMainWindow):
     def _smooth_changed(self,enabled):
         settings().setValue('map/smooth_results',enabled);self.results.smooth=enabled;self.results.show_frame()
 
+    def _terrain_wetting_changed(self,enabled):
+        settings().setValue('map/terrain_aware_wetting',enabled)
+        self.results.terrain_aware_wetting=enabled;self.results._smooth_cache.clear();self.results.show_frame()
+
     def geometry_action(self,action):
         try:
             # Navigation reads display geometry and must never acquire the
@@ -989,25 +1180,31 @@ class MainWindow(QMainWindow):
                     self.map.fitInView(self.map.release_item.path().boundingRect(),Qt.KeepAspectRatio)
                 else:self.map.fit_domain()
                 return
+            if action.startswith('select_boundary:'):
+                name=action.split(':',1)[1]; doc=self._collect(validate=False); ids={a['edge_id'] for a in doc['settings']['assignments'] if a['bc_id']==name}
+                self.map.set_boundaries(doc['settings']['assignments'],selected=[i for i,e in enumerate(self.map.domain_edges) if e.edge_id in ids]);return
             if self.runner.is_running or self._tasks:raise ValueError('Finish or stop the current operation before editing geometry.')
             if action=='import_dem':self._import_dem();return
             if not self.map.terrain:raise ValueError('Import a terrain DEM first.')
             if action in ('add_turbine','edit_turbine'):
                 self.forms.turbines.begin_placement(edit=action=='edit_turbine')
                 self.map.turbine_preview_diameter=self.forms.turbines.diameter.value();self.layers['Turbines'].setChecked(True)
-                self.map.begin_capture('turbine');self.status.setText('Click the turbine centre, then a point downstream along the local river. Rotor stays perpendicular.');return
+                self.map.begin_capture('turbine');self.status.setText('First click: turbine centre. Second click: DOWNSTREAM towards the outlet, not upstream. The fixed-axis offset rotates the rotor from this reference.');return
             if action=='remove_turbine':
+                self.geometry_undo.remember()
                 self.forms.turbines.remove_selected();self.map.set_tool('pan');return
             if '_zone:' in action:
                 operation,kind=action.split(':');doc=self._collect(validate=False)
-                self.layers['Roughness' if kind=='roughness' else 'Erodible depth'].setChecked(True)
+                self.layers['Roughness' if kind=='roughness' else 'Erodible zones'].setChecked(True)
                 if operation=='add_zone':self.map.begin_capture('zone:'+kind);return
                 name=self.forms.zones[kind].selected();rows=doc['material_zones'][kind];row=next(r for r in rows if r['id']==name)
                 if operation=='edit_zone':self.map.begin_zone_edit(kind,row);return
                 if operation=='remove_zone':
+                    self.geometry_undo.remember()
                     self.map.set_tool('pan');doc['material_zones'][kind]=[r for r in rows if r['id']!=name]
                     self._load_document(doc);self._changed();return
             if action=='import_domain':self._import_domain();return
+            if action=='import_breaklines':self._import_breaklines();return
             if action=='edit_sediment_boundary':
                 name=self.forms.forcing.boundary.currentData()
                 if not name:raise ValueError('Assign an inlet or outlet in BC & IC first.')
@@ -1029,6 +1226,7 @@ class MainWindow(QMainWindow):
                 if action=='edit_solid':
                     self.layers['Solids'].setChecked(True);self.map.begin_solid_edit(row)
                     self.status.setText('Drag solid vertices; right-click ends editing.');return
+                self.geometry_undo.remember()
                 self.map.set_tool('pan');doc['settings']['solids']=[r for r in doc['settings']['solids'] if r['id']!=name]
                 self._load_document(doc);self._changed();return
             if action=='add_breakline':
@@ -1042,19 +1240,56 @@ class MainWindow(QMainWindow):
                 if action=='edit_breakline':
                     self.layers['Breaklines'].setChecked(True);self.map.begin_breakline_edit(row)
                     self.status.setText('Drag breakline vertices; right-click ends editing.');return
+                self.geometry_undo.remember()
                 self.map.set_tool('pan');doc['settings']['breaklines']=[r for r in doc['settings']['breaklines'] if r['id']!=name]
                 self._load_document(doc);self._changed();return
             if action=='import_guides':self._import_guides();return
-            if action=='select_edges':self.map.set_tool('boundary');self.map_hint.setText('Select one exterior edge, enter its boundary name/type, then Apply.');return
+            if action=='select_boundary_edge':
+                if not self.forms.boundary_name.text().strip():raise ValueError('Enter a boundary name before selecting an edge.')
+                if not self.has_domain:raise ValueError('Define a calculation domain first.')
+                name=self.forms.boundary_name.text().strip();kind=self.forms.boundary_kind.currentData()
+                self._pending_boundary_config=None
+                if kind!='wall':
+                    original=self._collect(validate=False);dirty=self.dirty
+                    domain=PolygonDomain(**original['settings']['domain'])
+                    prior=next((a['edge_id'] for a in original['settings']['assignments'] if a['bc_id']==name),domain.edges[0].edge_id)
+                    temporary=services.assign_boundary(original,[prior],name,kind,for_editing=True)
+                    if kind=='inlet' and name not in original['settings']['sediment_boundaries']:
+                        from braids_core.river_boundary import FLOW_FREE
+                        ng=len(temporary['settings']['columns']['fraction_ids'])
+                        temporary['settings']['sediment_boundaries'][name]=dict(kind=FLOW_FREE,concentration_kg_m3=[0.]*ng)
+                    self._load_document(temporary)
+                    accepted=self.edit_boundary(name)
+                    if accepted:
+                        configured=self._collect(validate=False)
+                        self._pending_boundary_config={key:deepcopy(configured[key].get(name)) for key in ('boundary_states','sediment_schedules')}
+                        self._pending_boundary_config['hydraulic']=deepcopy(configured['settings']['hydraulics'][name])
+                        self._pending_boundary_config['sediment']=deepcopy(configured['settings']['sediment_boundaries'].get(name))
+                    self._load_document(original);self.forms.boundary_name.setText(name)
+                    from .river_physics import set_choice
+                    set_choice(self.forms.boundary_kind,kind);self.dirty=dirty;self._title()
+                    if not accepted:return
+                self.map.selected_edges.clear();self._assigning_edge=True;self.map.set_tool('boundary');self.status.setText('Click one domain edge to assign the entered boundary name and type.');return
+            if action=='select_edges':self.map.set_tool('boundary');self.map_hint.setText('Select one exterior edge.');return
             if action=='create_edges':
                 self._load_document(self._collect(validate=False));self.map.set_tool('boundary');self.status.setText('Current domain edges are ready; old changed-edge assignments are not reused.');return
-            if action.startswith('select_boundary:'):
-                name=action.split(':',1)[1]; doc=self._collect(validate=False); ids={a['edge_id'] for a in doc['settings']['assignments'] if a['bc_id']==name}
-                self.map.set_boundaries(doc['settings']['assignments'],selected=[i for i,e in enumerate(self.map.domain_edges) if e.edge_id in ids]);return
             if action.startswith('edit_boundary:'):self.edit_boundary(action.split(':',1)[1]);return
             if action=='clear_boundary':
                 doc=services.clear_boundary(self._collect(validate=False),self.forms.boundary_name.text().strip(),for_editing=True);self._load_document(doc);self._changed();return
             if action=='assign_boundary':self._assign_boundary();return
+            if action in ('export_mesh','import_mesh'):
+                if self.project_root is None:raise ValueError('Save the project before transferring a mesh.')
+                from . import mesh_transfer
+                doc=self._collect(ready=True);cache=self.project_root/'model_layers/preparation_cache'
+                if action=='export_mesh':
+                    filename,_=QFileDialog.getSaveFileName(self,'Export mesh','','BRAIDS mesh (*.braidsmesh)')
+                    if not filename:return
+                    self._background(lambda:mesh_transfer.export_mesh(doc,cache,filename),lambda _:self.status.setText('Mesh exported.'),'Exporting mesh…')
+                else:
+                    filename,_=QFileDialog.getOpenFileName(self,'Import mesh','','BRAIDS mesh (*.braidsmesh)')
+                    if not filename:return
+                    self._background(lambda:mesh_transfer.import_mesh(doc,cache,filename),lambda _:self.status.setText('Mesh imported. Prepare to reuse it.'),'Checking imported mesh…')
+                return
             if action=='align_boundaries':self._align_boundaries();return
             if action=='preview_mesh':self.preview_mesh();return
             if action=='export_domain':self._export_domain();return
@@ -1085,8 +1320,8 @@ class MainWindow(QMainWindow):
                 minimum=float(np.nanmin(terrain.raster.z))
                 updated['initial'].update(stage_m=minimum-max(1.,abs(minimum)*1e-6),velocity_m_s=[0.,0.])
             self.map.set_terrain(terrain,[]);self._load_document(updated);self._changed()
-            self.status.setText('DEM loaded Â· draw or import the domain' if not self.has_domain else 'DEM replaced Â· prepare again')
-        self._background(lambda:read_terrain(filename),done,'Reading native DEM for zoom-dependent displayâ€¦')
+            self.status.setText('DEM loaded · draw or import the domain' if not self.has_domain else 'DEM replaced · prepare again')
+        self._background(lambda:read_terrain(filename),done,'Reading native DEM for zoom-dependent display…')
 
     def _import_domain(self):
         filename,_=QFileDialog.getOpenFileName(self,'Import domain polygon','','Vector polygon (*.gpkg *.geojson *.json *.shp);;All files (*)')
@@ -1097,22 +1332,69 @@ class MainWindow(QMainWindow):
 
     def _accept_domain(self,vertices):
         doc=self._collect(validate=False)
+        if self.has_domain and not self._domain_warning_shown:
+            QMessageBox.information(self,'Domain changed','Changing the domain requires preparation again before running.')
+            self._domain_warning_shown=True
         if self.has_domain and doc['settings']['assignments']:
             answer=QMessageBox.question(self,'Replace domain geometry','Changing the domain clears old boundary assignments. Apply this geometry and reassign boundaries?',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
             if answer!=QMessageBox.Yes:self._load_document(doc);return
-        updated=services.replace_domain(doc,vertices,self.map.terrain.wkt,for_editing=True);self.has_domain=True
-        self._load_document(updated);self._changed();self.status.setText('Domain updated Â· select inlet/outlet edges and apply boundary conditions')
+        updated=services.replace_domain(doc,vertices,self.map.terrain.wkt,for_editing=True)
+        self.geometry_undo.remember();self.has_domain=True
+        self._load_document(updated);self._changed();self.status.setText('Domain updated · select inlet/outlet edges and apply boundary conditions')
+
+    def _delete_map_feature(self,kind,identifier):
+        try:
+            if kind in ('gauge','profile'):
+                self.results.select_measurement(kind,identifier)
+                self.results.delete_measurement(kind)
+                self.status.setText('Probe deleted' if kind=='gauge' else 'Profile deleted');return
+            if self.runner.is_running or self._tasks:
+                raise ValueError('Stop the current operation before deleting model geometry. Probes and profiles remain editable.')
+            doc=self._collect(validate=False)
+            self.geometry_undo.remember()
+            if kind=='domain':
+                self.has_domain=False;self.map.set_release([])
+                self._load_document(doc)
+            elif kind=='guide':
+                lines=deepcopy(self.map.sketch_lines);lines.pop(int(identifier));self.map.set_sketch_lines(lines)
+                self._last_geometry_guides=deepcopy(lines)
+            elif kind in ('breakline','solid'):
+                key='breaklines' if kind=='breakline' else 'solids'
+                doc['settings'][key]=[r for r in doc['settings'][key] if r['id']!=identifier]
+                self._load_document(doc)
+            elif kind.startswith('zone:'):
+                key=kind.split(':',1)[1]
+                doc['material_zones'][key]=[r for r in doc['material_zones'][key] if r['id']!=identifier]
+                self._load_document(doc)
+            elif kind=='turbine':
+                index=next(i for i,r in enumerate(self.forms.turbines.rows) if r['id']==identifier)
+                self.forms.turbines.selection.setCurrentIndex(index);self.forms.turbines.remove_selected()
+            elif kind=='bank_survey':
+                doc['bank_survey']['zones']=[r for r in doc['bank_survey']['zones'] if r['id']!=identifier]
+                if not doc['bank_survey']['zones']:doc['bank_survey']=None
+                self._load_document(doc)
+                for item in getattr(self,'_bank_items',[]):
+                    if item.scene() is not None:self.map.scene().removeItem(item)
+                self._bank_items=[]
+                if doc['bank_survey']:self._preview_survey()
+            else:return
+            self._changed();self.status.setText(f'{kind.replace("zone:","").replace("_"," ").capitalize()} deleted')
+            self.map.set_tool('pan')
+        except Exception as exc:self.error(exc)
 
     def _geometry_changed(self,rings,lines):
         try:
             if self.runner.is_running or self._tasks:raise ValueError('Finish the current operation before editing geometry.')
+            if lines!=self._last_geometry_guides:
+                self.geometry_undo.remember(self.geometry_undo.capture(guides=self._last_geometry_guides))
             if rings:
                 candidate=rings[-1][0]
                 same=self.has_domain and np.array_equal(np.asarray(self.document_base['settings']['domain']['vertices_xy']),np.asarray(candidate))
                 if not same:self._accept_domain(candidate)
             elif self.has_domain:
-                self.has_domain=False;self.map.domain_edges=[];self.map.set_boundaries([],selected=[]);self.status.setText('Domain removed; draw or import a new domain.')
+                self.geometry_undo.remember();self.has_domain=False;self.status.setText('Domain removed; other layers remain available.')
             self.map.set_sketch_lines(lines);self._changed()
+            self._last_geometry_guides=deepcopy(lines)
         except Exception as exc:
             self._display_domain(self.document_base);self.error(exc)
 
@@ -1125,7 +1407,14 @@ class MainWindow(QMainWindow):
 
     def _assign_boundary(self):
         doc=self._collect(validate=False);ids=self._selected_ids();name=self.forms.boundary_name.text().strip();kind=self.forms.boundary_kind.currentData()
-        updated=services.assign_boundary(doc,ids,name,kind,for_editing=True)
+        config=self._pending_boundary_config
+        updated=services.assign_boundary(doc,ids,name,kind,controls=config['hydraulic'] if config else None,for_editing=True)
+        if config:
+            for key in ('boundary_states','sediment_schedules'):
+                if config[key] is not None:updated[key][name]=config[key]
+            if config['sediment'] is not None:updated['settings']['sediment_boundaries'][name]=config['sediment']
+            updated=services._resolve_boundary_state(updated)
+        self._pending_boundary_config=None
         self._load_document(updated);self._changed();self.status.setText(f'Boundary {name} assigned. Double-click it to edit its conditions.')
 
     def _align_boundaries(self,assignment=None):
@@ -1139,14 +1428,30 @@ class MainWindow(QMainWindow):
         grid=deepcopy(doc['settings']['grid']);fine=finest_grid(NativeGrid(**grid),doc['settings']['levels'])
         new,mapped,audit=derive_axis_aligned(domain,rows,fine)
         updated=services.aligned_document(doc,new,mapped,grid,new_assignment=assignment,for_editing=True)
-        details=[f"{n}: width {a['original_width_m']:.3f} â†’ {a['aligned_width_m']:.3f} m; endpoint shift â‰¤ {a['maximum_endpoint_shift_m']:.3f} m" for n,a in audit['sections'].items()]
-        details.append(f"Area {audit['original_area_m2']:.3f} â†’ {audit['derived_area_m2']:.3f} mÂ². Walls remain cropped.")
+        details=[f"{n}: width {a['original_width_m']:.3f} → {a['aligned_width_m']:.3f} m; endpoint shift ≤ {a['maximum_endpoint_shift_m']:.3f} m" for n,a in audit['sections'].items()]
+        details.append(f"Area {audit['original_area_m2']:.3f} → {audit['derived_area_m2']:.3f} m². Walls remain cropped.")
         self.map.set_release([(np.asarray(new.vertices_xy),[])])
         message=QMessageBox(self);message.setWindowTitle('Review inlet/outlet alignment');message.setText('Use the proposed boundary geometry shown on the map?')
         message.setInformativeText('\n'.join(details));message.setDetailedText(json.dumps(audit,indent=2));message.setStandardButtons(QMessageBox.Yes|QMessageBox.No);message.setDefaultButton(QMessageBox.No)
         if message.exec()!=QMessageBox.Yes:self._load_document(doc);return
         audit['original_domain']=doc['settings']['domain'];audit['approved_domain']=updated['settings']['domain'];self._geometry_audits.append(audit)
         self._load_document(updated);self._changed();self.status.setText('Alignment accepted and recorded. Review hydraulic values, then save and prepare.')
+
+    def _import_breaklines(self):
+        filename,_=QFileDialog.getOpenFileName(self,'Import mesh breaklines','','Vector lines (*.geojson *.json *.gpkg *.shp)')
+        if not filename:return
+        from .river_bank_lines import read_breaklines
+        from braids_core.boundaries.breaklines import validate_breaklines
+        filename=self._local_input(filename,'vector')
+        doc=self._collect(validate=False);rows=doc['settings']['breaklines'];names={r['id'] for r in rows}
+        for row in read_breaklines(filename,self.map.terrain.wkt):
+            name=row['id'];i=2
+            while name in names:name=f'{row["id"]} ({i})';i+=1
+            row['id']=name;names.add(name);rows.append(row)
+        validate_breaklines(rows,PolygonDomain(**doc['settings']['domain']))
+        self.geometry_undo.remember()
+        self._load_document(doc);self.layers['Breaklines'].setChecked(True);self._changed()
+        self.status.setText('Breaklines imported. Generate the mesh to crop cells along the river banks.')
 
     def _import_guides(self):
         from osgeo import ogr
@@ -1165,7 +1470,8 @@ class MainWindow(QMainWindow):
             segments=[geom] if kind==ogr.wkbLineString else [geom.GetGeometryRef(i) for i in range(geom.GetGeometryCount())] if kind==ogr.wkbMultiLineString else []
             if not segments:raise ValueError('Every feature must be a LineString or MultiLineString.')
             lines.extend([[[float(x),float(y)] for x,y,*_ in segment.GetPoints()] for segment in segments])
-        self.map.set_sketch_lines(self.map.sketch_lines+lines);self._changed()
+        self.geometry_undo.remember()
+        self.map.set_sketch_lines(self.map.sketch_lines+lines);self._last_geometry_guides=deepcopy(self.map.sketch_lines);self._changed()
 
     def _export_domain(self):
         from osgeo import ogr
@@ -1195,10 +1501,12 @@ class MainWindow(QMainWindow):
                 path.closeSubpath()
             pen=QPen(QColor(geometry_color()),2);pen.setCosmetic(True)
             item=self.map.scene().addPath(path,pen);item.setZValue(28);item.setToolTip('Bank '+zone['id']);self._bank_items.append(item)
+            item.setData(10,'bank_survey');item.setData(11,zone['id'])
             toe=zone['toe_xy'];path=QPainterPath(self.map.to_scene(*toe[0]))
             for point in toe[1:]:path.lineTo(self.map.to_scene(*point))
             pen=QPen(QColor(geometry_color()),3);pen.setCosmetic(True)
             item=self.map.scene().addPath(path,pen);item.setZValue(29);item.setToolTip('Toe '+zone['id']);self._bank_items.append(item)
+            item.setData(10,'bank_survey');item.setData(11,zone['id'])
         self.status.setText(f"Survey preview: {len(survey['zones'])} bank zone(s). The prepared face mapping is created during Prepare.")
 
     def _begin_bank_drawing(self,kind):
@@ -1210,7 +1518,8 @@ class MainWindow(QMainWindow):
     def _bank_geometry_drawn(self,kind,points):
         try:
             if self.runner.is_running or self._tasks:raise ValueError('Finish the current operation before editing geometry.')
-            if kind=='turbine':self.forms.turbines.place(points);return
+            if kind=='turbine':
+                self.geometry_undo.remember();self.forms.turbines.place(points);return
             if kind.startswith('zone:'):
                 key=kind.split(':')[1];doc=self._collect(validate=False);rows=doc['material_zones'][key];names={r['id'] for r in rows};i=1
                 while f'{key} {i}' in names:i+=1
@@ -1218,13 +1527,14 @@ class MainWindow(QMainWindow):
                        if key=='roughness' else float(self.forms.physics.layers.item(0,0).text()))
                 rows.append(dict(id=f'{key} {i}',value=value,points_xy=np.asarray(points,float).tolist()))
                 from braids_core.river_material_zones import validate
-                validate(doc['material_zones']);self._load_document(doc);self._changed();return
+                validate(doc['material_zones']);self.geometry_undo.remember();self._load_document(doc);self._changed();return
             if kind in ('solid_polygon','solid_ellipse'):
                 from braids_core.boundaries.solids import validate_solids
                 doc=self._collect(validate=False);rows=doc['settings']['solids'];names={r['id'] for r in rows};i=1
                 while f'Solid {i}' in names:i+=1
                 rows.append(dict(id=f'Solid {i}',points_xy=np.asarray(points,float).tolist()))
                 validate_solids(rows,PolygonDomain(**doc['settings']['domain']))
+                self.geometry_undo.remember()
                 self._load_document(doc);self._changed();self.status.setText('Solid added. Generate the mesh to verify cropped wall cells.');return
             if kind.startswith('breakline_'):
                 if kind!='breakline_line':raise ValueError('Breaklines must be drawn as polylines, not polygons.')
@@ -1233,6 +1543,7 @@ class MainWindow(QMainWindow):
                 rows.append(dict(id=f'Breakline {i}',closed=False,points_xy=np.asarray(points,float).tolist()))
                 from braids_core.boundaries.breaklines import validate_breaklines
                 validate_breaklines(rows,PolygonDomain(**doc['settings']['domain']))
+                self.geometry_undo.remember()
                 self._load_document(doc);self._changed();self.status.setText('Breakline added. Generate the mesh to verify minimum areas.');return
             result=self.forms.physics.bank_survey.receive_drawn(kind,points)
             if result:self._preview_survey()
@@ -1247,6 +1558,7 @@ class MainWindow(QMainWindow):
                 if row['id']==name:row['points_xy']=np.asarray(points,float).tolist()
             from braids_core.river_material_zones import validate
             validate(doc['material_zones'])
+            self.geometry_undo.remember()
             self.forms.zones[kind].load(doc['material_zones'][kind]);self.document_base['material_zones']=deepcopy(doc['material_zones']);self._changed()
         except Exception as exc:
             self.map.end_zone_edit();self.map.set_zones(self._collect(validate=False)['material_zones']);self.error(exc)
@@ -1259,6 +1571,7 @@ class MainWindow(QMainWindow):
                 if row['id']==name:row['points_xy']=np.asarray(points,float).tolist()
             from braids_core.boundaries.breaklines import validate_breaklines
             validate_breaklines(doc['settings']['breaklines'],PolygonDomain(**doc['settings']['domain']))
+            self.geometry_undo.remember()
             self.document_base['settings']['breaklines']=deepcopy(doc['settings']['breaklines']);self._changed()
         except Exception as exc:
             self.map.end_breakline_edit();self.map.set_breaklines(before);self._layer_visibility();self.error(exc)
@@ -1271,6 +1584,7 @@ class MainWindow(QMainWindow):
                 if row['id']==name:row['points_xy']=np.asarray(points,float).tolist()
             from braids_core.boundaries.solids import validate_solids
             validate_solids(doc['settings']['solids'],PolygonDomain(**doc['settings']['domain']))
+            self.geometry_undo.remember()
             self.document_base['settings']['solids']=deepcopy(doc['settings']['solids']);self._changed()
         except Exception as exc:
             self.map.end_solid_edit();self.map.set_solids(before);self._layer_visibility();self.error(exc)
@@ -1283,7 +1597,7 @@ class MainWindow(QMainWindow):
             from .river_physics import set_choice
             set_choice(editor.boundary,name);self._select_step('BC & IC')
             dirty=self.dirty
-            dialog=QDialog(self);dialog.setWindowTitle(tr('Boundary conditions')+' â€” '+name);dialog.resize(700,680)
+            dialog=QDialog(self);dialog.setWindowTitle(tr('Boundary conditions')+' — '+name);dialog.resize(700,680)
             layout=QVBoxLayout(dialog);scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(editor);layout.addWidget(scroll)
             editor.show();editor.box.setExpanded(True);editor.boundary.setEnabled(False)
             buttons=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel);layout.addWidget(buttons)
@@ -1297,6 +1611,7 @@ class MainWindow(QMainWindow):
             else:
                 editor.load_project(original);self.forms._sync_boundaries()
                 self.dirty=dirty;self._title()
+            return accepted
         except Exception as exc:self.error(exc)
 
     def set_background(self,provider,*,persist=True):
@@ -1318,6 +1633,7 @@ class MainWindow(QMainWindow):
         apply_theme(QApplication.instance(),dialog.theme.currentData());self.map.apply_appearance(dialog.theme.currentData())
         self.map.refresh_geometry_color();self.map.refresh_mesh_color();self.map.viewport().update();self.set_background(dialog.background.currentData())
         self.map.snap_enabled=snap_enabled();self.results.animate_mesh.setChecked(adaptive_mesh());self.results._draw_measurements()
+        self.results.smooth_level=dialog.smooth_level.value();self.results.show_frame();self._layer_visibility()
         if self.results.particles:self.results.particles.clear();self.results._update_particles()
 
     def toggle_theme(self):
@@ -1330,7 +1646,7 @@ class MainWindow(QMainWindow):
             '1. Open demo, or import a DEM and draw/import one domain polygon.\n'
             '2. Select domain edges. Assign named inlets/outlets and their hydraulic conditions. All other edges are walls.\n'
             '3. Choose mesh strategy, then CPU or GPU and duration in Run. Fresh runs start dry.\n'
-            '4. Save a .braids.json project file; its data folder is created alongside. Run prepares automatically when needed.\n'
+            '4. Save a .braidsproj project file; its data folder is created alongside. Run prepares automatically when needed.\n'
             '5. Results appear on the map. Use Results for animation, probes, transects and export.\n\n'
             'Sediment is optional and off by default. Advanced > Sediment transport opens 04 Transport, 05 Morpho evolution and 06 Sediment transport BC. '
             'Select bedload, suspended mass or both explicitly in 04 / General. Prepare checks combinations before building the mesh and shows one correction at a time.\n'

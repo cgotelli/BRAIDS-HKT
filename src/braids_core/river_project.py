@@ -15,12 +15,75 @@ from .sediment.river_vr1993 import REFERENCE_PARAMETERS as VAN_RIJN_REFERENCE_PA
 from .sediment.river_skin_shear import PARAMETERS as SKIN_SHEAR_PARAMETERS, validate_parameters as validate_skin_parameters
 from .sediment.river_wet_avalanche import PARAMETERS as WET_AVALANCHE_PARAMETERS, validate_parameters as validate_avalanche_parameters
 
-SCHEMA = "braids.river-project.v40"
+SCHEMA = "braids.river-project.v41"
 SETTING_KEYS = frozenset((
     "domain", "assignments", "grid", "levels", "breaklines", "solids", "controls", "columns", "hydraulics",
     "sediment_boundaries", "bank", "suspension", "adaptation", "adaptive",
     "end_time_s", "dt_max_s", "output_interval_s", "checkpoint_interval_s", "sediment_start_time_s",
 ))
+# Output selection concerns saved result frames only: it never changes the
+# numerical state, timestep, checkpoint contents, or turbine performance CSV.
+# Older current-schema projects have no choice recorded and retain their full
+# historic output inventory when replayed.
+OUTPUT_FIELD_IDS = frozenset((
+    'initial_bed', 'bedrock', 'bedload', 'suspended', 'advanced_hydraulics',
+    'bank_and_collapse', 'boundary_ledgers', 'bedforms', 'bed_material',
+))
+DEFAULT_OUTPUT_FIELDS = frozenset((
+    'initial_bed', 'bedrock', 'bedload', 'suspended', 'advanced_hydraulics',
+    'bank_and_collapse', 'bedforms',
+))
+
+
+def output_fields(settings, *, legacy=True):
+    """Return the selected frame-field groups without changing physics.
+
+    A missing key is deliberately a legacy full-output replay, not a silent
+    rewrite of existing projects.  New desktop documents always save the
+    explicit selection.
+    """
+    raw=settings.get('output_fields')
+    if raw is None:
+        return frozenset(OUTPUT_FIELD_IDS if legacy else DEFAULT_OUTPUT_FIELDS)
+    if (not isinstance(raw, list) or any(type(name) is not str for name in raw)
+            or len(set(raw)) != len(raw) or not set(raw) <= OUTPUT_FIELD_IDS):
+        fail('settings.output_fields', 'Choose unique known result-field groups')
+    return frozenset(raw)
+
+
+def select_output_fields(fields, settings):
+    """Filter optional frame arrays; q/z and output-clock metadata stay saved."""
+    selected=output_fields(settings)
+    groups={
+        'initial_bed': {'initial_bed_m'},
+        'bedrock': {'rock'},
+        # These are public result fields, not solver diagnostics.  In
+        # particular, do not write the mobile-fraction reconstruction,
+        # suspension initialisation, or the last sampling interval merely
+        # because a bedload/suspended process was active.
+        'bedload': {'bedload_vector_m2_s','bedload_capacity_m2_s'},
+        'suspended': {'suspended'},
+        'advanced_hydraulics': {'W','secondary_fields','secondary_hI_m2_s',
+                                'secondary_intensity_m_s','dispersion_flux','dispersion_flux_m2_s'},
+        'bank_and_collapse': {'bank','collapse','bank_gross','collapse_gross',
+                              'bank_failure_history','bank_failure_count','bank_failure_class_cumulative'},
+        'boundary_ledgers': {'water','bed_boundary','sus_boundary'},
+        'bedforms': {'bedforms'},
+        # Kept for strict validation of older documents, but there is no
+        # current public bed-material result in the Desktop output inventory.
+        'bed_material': set(),
+    }
+    # ``state`` is a raw Jiang--Cao solver snapshot.  It is never a public
+    # result field and must not be written merely because it is available.
+    # ``legacy_internal`` names fields produced by existing workers but not
+    # exposed by the current Desktop report contract.  They must be removed
+    # explicitly rather than falling through as unknown fields.
+    legacy_internal={'state','mobile_bedload_concentration','bedload_sample_dt_s',
+                     'suspended_initial','acceleration','mass','sv','basal_ledger','area'}
+    optional=set().union(*groups.values())|legacy_internal
+    retained={'q','z','time','steps','water_vector_m2_s','bedload_flux_sampling'}
+    for name in selected:retained.update(groups[name])
+    return {name:value for name,value in fields.items() if name not in optional or name in retained}
 SLOPE_PARAMETERS = dict(alfabs=0., alfabn=0., ashld=.85, bshld=.5,
                         cshld=0., dshld=0., alfpa=1., thcrpa=.05)
 HIDING_PARAMETERS = dict(capacity=dict(parker_alpha=.5, wu_exponent=-.6),
@@ -108,12 +171,16 @@ def worker_profile(project):
         len(settings['columns']['fraction_ids'])==1)
     # Restart publication is an administrative clock, not a native mesh or
     # numerical-step input. The public worker passes it explicitly at runtime.
-    carrier_settings={key:value for key,value in settings.items() if key!='checkpoint_interval_s'}
+    carrier_settings={key:value for key,value in settings.items()
+                      if key not in ('checkpoint_interval_s','output_fields')}
     from .river_turbines import constraints,mesh_regions
     layout=project.get('power_plan',{}).get('layout',project['turbines'])
     carrier_settings['breaklines']=settings['breaklines']+constraints(layout)
     carrier_settings['local_refinement']=mesh_regions(layout)
-    return dict(carrier_settings, hydraulics=carrier(settings['hydraulics']),
+    # An absent optional switch in the current project format retains the
+    # existing finest-boundary policy. The emitted worker profile is explicit.
+    adaptation={'open_boundary_enabled':True,**settings['adaptation']}
+    return dict(carrier_settings, adaptation=adaptation,hydraulics=carrier(settings['hydraulics']),
         sediment_boundaries=carrier_boundaries(settings['sediment_boundaries'],settings['columns']),
         schema=CARRIER_SCHEMA, physics_mode="hydrodynamics" if simple_hydro else "combined")
 
@@ -130,6 +197,9 @@ def validate_binding(profile, resolved):
     h = doc["physics"]["hydrodynamics"]
     s = doc["physics"]["sediment"]
     c, columns = profile["controls"], profile["columns"]
+    if s is not None and s['capacity']['method']=='capacity.mpm_braids_5_055':
+        from .hydraulics.bedload import validate_execution
+        validate_execution(profile)
     simple_hydro = (s is None and not (c['betac'] or c['diffusivity'] or c['viscosity'])
                     and len(columns['fraction_ids']) == 1)
 
@@ -138,6 +208,9 @@ def validate_binding(profile, resolved):
 
     if h["secondary_flow"] == "secondary.off" and (c["betac"] or c["diffusivity"]):
         fail("controls", "Secondary flow is off but its momentum/diffusion coefficients are nonzero")
+    if (s is not None and h['secondary_flow'] != 'secondary.off' and
+            s['secondary_direction'] == 'capacity_owned' and c['espir'] != 1.):
+        fail('controls.espir', 'This transport formula owns its sediment direction and does not use FLOW Espir. Set Espir to 1, or select a compatible scalar-direction formula.', 'integration_pending')
     if h["turbulence"] == "off" and c["viscosity"]:
         fail("controls.viscosity", "Turbulence is off but eddy viscosity is nonzero")
     if c["diameter"] != columns["diameter_m"][0]:
@@ -150,7 +223,7 @@ def validate_binding(profile, resolved):
             if any(row["concentration_kg_m3"]) or any(row.get("solid_flux_m2_s", [])):
                 fail("sediment_boundaries", "Sediment is off but boundary sediment is nonzero")
         return doc
-    if s["capacity"]["method"] not in ("capacity.general", "capacity.mpm", "capacity.engelund_hansen",
+    if s["capacity"]["method"] not in ("capacity.mpm_braids_5_055", "capacity.general", "capacity.mpm", "capacity.engelund_hansen",
                                      "capacity.van_rijn_1984_modified", "capacity.wang_fredsoe",
                                      "capacity.ashida_michiue_generalized", "capacity.wilcock_crowe",
                                      "capacity.wilcock_crowe_modified", "capacity.gaeuman",
@@ -205,11 +278,7 @@ def validate_project(value):
             "slope_parameters", "hiding_parameters", "roughness_parameters", "bedform_methods",
             "dependent_layer_parameters", "column_methods", "van_rijn_reference_parameters", "skin_shear_parameters",
             "wet_avalanche_parameters", "sediment_schedules", "boundary_states", "boundary_resolution", "bank_survey", "turbines"}
-    if 'power_plan' in value:
-        keys.add('power_plan')
-        from .river_turbine_power_plan import validate as validate_power_plan
-        try:validate_power_plan(value['power_plan'],value)
-        except (ValueError,TypeError,KeyError) as exc:fail('power_plan',str(exc))
+    if 'power_plan' in value:fail('power_plan','Estimates-only Gaussian planning is retired. Use the coupled Thetis turbine extension and configure its speed / Ct / Cp data.')
     selected=value.get('model',{}).get('physics',{}).get('sediment')
     if selected and selected.get('suspension')=='suspension.garcia_parker_1991':
         keys.add('garcia_parker_parameters')
@@ -234,8 +303,19 @@ def validate_project(value):
         editor_keys={"schema", "sediment", "forcing", "schedules", "boundaries", "bank_survey"}
         if isinstance(editor,dict) and 'turbines' in editor:
             editor_keys.add('turbines')
-            draft=editor['turbines'];exact(draft,('schema','rows','parameters','table','surface'),'editor_state.turbines')
-            if draft['schema']!=4 or not isinstance(draft['rows'],list) or not isinstance(draft['parameters'],dict) or not isinstance(draft['table'],list) or not isinstance(draft['surface'],dict):fail('editor_state.turbines','Current speed-surface turbine editor state required; old drafts are not migrated.')
+            draft=editor['turbines']
+            # An empty inactive UI draft carries no physics; keep ordinary
+            # hydraulic projects usable while the editor rewrites that draft.
+            inactive_empty=isinstance(draft,dict) and draft.get('schema')==4 and draft.get('rows')==[] and value.get('turbines') is None
+            independent=isinstance(draft,dict) and draft.get('schema') in (6,7)
+            draft_keys=('schema','rows','parameters','table','surface') if inactive_empty else ('schema','rows','parameters','table')
+            exact(draft,(*draft_keys,'curves') if independent else draft_keys,'editor_state.turbines')
+            if (draft['schema'] not in ((4,) if inactive_empty else (5,6,7)) or not isinstance(draft['rows'],list) or not isinstance(draft['parameters'],dict) or not isinstance(draft['table'],list)):
+                fail('editor_state.turbines','Current Thetis turbine editor state required; reconfigure old active turbine controls.')
+            if independent:
+                exact(draft['curves'],('thrust_coefficient','power_coefficient'),'editor_state.turbines.curves')
+                if any(not isinstance(rows,list) or any(not isinstance(row,list) or len(row)!=2 or any(not isinstance(v,str) for v in row) for row in rows) for rows in draft['curves'].values()):
+                    fail('editor_state.turbines.curves','Each curve draft must contain two text cells per row.')
         if isinstance(editor,dict) and 'checkpoint_clock' in editor:editor_keys.add('checkpoint_clock')
         exact(editor, editor_keys, "editor_state")
         if type(editor["schema"]) is not int or editor["schema"] != 6 or not isinstance(editor["sediment"], dict):
@@ -296,7 +376,12 @@ def validate_project(value):
         validate_collapse(collapse_selection['avalanche'],collapse_selection['capacity']['method'],
             collapse_selection['suspension'],mf=value['settings']['controls']['morfac'],
             banks=collapse_selection['banks'])
-    exact(value["settings"], SETTING_KEYS, "settings")
+    setting_keys=set(SETTING_KEYS)
+    # Existing current-schema projects predate selectable frame outputs; keep
+    # their full-output replay valid until the editor saves an explicit choice.
+    if 'output_fields' in value['settings']:setting_keys.add('output_fields')
+    exact(value["settings"], setting_keys, "settings")
+    output_fields(value['settings'])
     from .river_open_boundary import resolve as resolve_boundaries
     try:
         kinds={a['bc_id']:a['kind'] for a in value['settings']['assignments'] if a['kind']!='wall'}
@@ -351,9 +436,9 @@ def validate_project(value):
                       ("adaptation", FieldSettings)):
         exact(p[name], (f.name for f in fields(cls)), "settings." + name)
     if type(p['adaptive']) is not bool or type(p['adaptation']['terrain_enabled']) is not bool:
-        fail('settings.adaptive', 'Explicit dynamic-depth or static-terrain mesh mode required')
-    if p['adaptive'] == p['adaptation']['terrain_enabled']:
-        fail('settings.adaptation', 'Choose dynamic depth-only AMR (terrain off), or static terrain mesh (terrain on, AMR off). Combined and uniformly-fixed legacy modes are not supported.')
+        fail('settings.adaptive', 'Explicit static-manual, static-terrain or dynamic-depth mesh mode required')
+    if p['adaptive'] and p['adaptation']['terrain_enabled']:
+        fail('settings.adaptation', 'Choose dynamic depth-only AMR (terrain off), static manual refinement (both off), or static terrain refinement (AMR off). Dynamic AMR and terrain refinement cannot be combined.')
     for name, number in p["controls"].items():
         _number(number, "settings.controls." + name)
     _number(p['controls']['morfac'], 'settings.controls.morfac', positive=True)
@@ -402,9 +487,12 @@ def validate_project(value):
                 if v < 0:
                     fail("sediment_boundaries." + name, "Negative sediment forcing is not supported")
     initial = value["initial"]
-    exact(initial, ("stage_m", "velocity_m_s", "layer_thickness_m", "layer_fractions",
-                    "concentration_kg_m3"), "initial")
+    initial_keys = ("stage_m", "velocity_m_s", "layer_thickness_m", "layer_fractions", "concentration_kg_m3")
+    exact(initial, initial_keys + (("depth_m",) if isinstance(initial,dict) and 'depth_m' in initial else ()), "initial")
     _number(initial["stage_m"], "initial.stage_m")
+    if 'depth_m' in initial:
+        _number(initial['depth_m'], 'initial.depth_m')
+        if initial['depth_m'] < 0:fail('initial.depth_m','Uniform depth cannot be negative')
     for key, count in (("velocity_m_s", 2), ("concentration_kg_m3", ng)):
         if not isinstance(initial[key], list) or len(initial[key]) != count:
             fail("initial." + key, "Wrong number of values")
@@ -486,11 +574,10 @@ def validate_project(value):
         fail("hydraulics", "Assigned open-boundary IDs differ from the defined hydraulic boundaries")
     for bc_id in sorted(ids):
         boundary_polyline(domain, assignments, bc_id)
-    from .boundaries.axis_aligned import finest_grid, validate_open_grid
-    try:
-        validate_open_grid(domain, assignments, finest_grid(grid,p['levels']))
-    except ValueError as exc:
-        fail('grid.open_boundaries',str(exc))
+    # Each named section remains contiguous and straight (checked above), but
+    # need not lie on a Cartesian grid line. Preparation retains the true
+    # normal/length of its cut faces and merges fragments to the local area
+    # floor. Hydraulic traces and accepted flux ledgers use those same faces.
     return read_json(canonical(value))
 
 

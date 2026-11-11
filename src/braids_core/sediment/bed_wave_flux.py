@@ -11,7 +11,7 @@ This is a BRAIDS numerical correction, not a copied Delft3D transport law.
 Qualification: reports/desktop_wave164 in river_morphodynamics.
 """
 
-METHOD = "split_capacity_bed_diagonal_v1"
+METHOD = "split_capacity_true_face_bed_diagonal_v2"
 
 
 def source(code):
@@ -32,6 +32,11 @@ def source(code):
         raise ValueError("Unexpected resolved sediment-wave source order")
     replacement = """  // Preserve the physical MUSCL flux; do not inject independent hydraulic jumps.
   const double bed_speed=fmax(0.,row[1]*gh);
-  double next=face[i]*nx+face[nf+i]*ny-.5*bed_speed*(s[1][3]-s[0][3])*law_params[13]/acceleration;
+  double next=face[i]*nx+face[nf+i]*ny-.5*bed_speed*bed_jump[i]*law_params[13]/acceleration;
 """
-    return "// "+METHOD+"\n"+code[:a]+replacement+code[b:]
+    import re
+    result=code[:a]+replacement+code[b:]
+    pattern=r'(ENTRY void matrix_bed_faces\([^{}]*)(\)\{)'
+    result,count=re.subn(pattern,r'\1,const double*bed_jump\2',result)
+    if count!=1:raise ValueError('Unexpected bed-wave entry signature')
+    return "// "+METHOD+"\n"+result

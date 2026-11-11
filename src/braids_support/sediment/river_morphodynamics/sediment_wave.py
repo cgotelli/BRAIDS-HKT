@@ -85,12 +85,18 @@ def install(physics,*,matrix=False):
             # is not physical water and contaminated those stencils even when
             # the final inactive sediment face was closed. Keep the hydraulic
             # dry floor and zero truly dry momentum instead, on both backends.
-            safe=p.wave_q.copy();safe[0]=p.xp.maximum(safe[0],p.parameters.dry)
-            safe[1:,p.wave_q[0]<=p.parameters.dry]=0.
-            p.wave_engine.launch('wave_state_gradients',p.n,p.n,p.nf,safe,p.z0,g['offset'],g['faces'],g['owner'],g['neighbour'],g['dxdy'],g['inverse'],g['displacement'],p.wave_state_gradient)
+            batch=getattr(p,'_river_hydraulic_batch',None)
+            shared=None if batch is None else batch.get('wave_safe_state')
+            if shared is None:
+                safe=p.wave_q.copy();safe[0]=p.xp.maximum(safe[0],p.parameters.dry)
+                safe[1:,p.wave_q[0]<=p.parameters.dry]=0.
+                o=g['owner'];j=g['neighbour']
+                active=(p.wave_q[0,o]>.001)&(p.wave_q[0,p.xp.maximum(j,0)]>.001)&(j>=0)
+                p.wave_engine.launch('wave_state_gradients',p.n,p.n,p.nf,safe,p.z0,g['offset'],g['faces'],g['owner'],g['neighbour'],g['dxdy'],g['inverse'],g['displacement'],p.wave_state_gradient)
+                if batch is not None:batch['wave_safe_state']=(safe,active)
+            else:safe,active=shared
             p.wave_engine.launch('matrix_bed_faces',p.nf,p.nf,p.n,float(p.morfac/(1-p.parameters.porosity)),
                 safe,p.z0,p.bedcell,p.capacity_gradient,p.wave_state_gradient,g['owner'],g['neighbour'],g['normal'],g['displacement'],p.bedface,p.wave_diagnostic)
-            o=g['owner'];j=g['neighbour'];active=(p.wave_q[0,o]>.001)&(p.wave_q[0,p.xp.maximum(j,0)]>.001)&(j>=0)
             # Inactive sediment faces are closed by ShorelinePhysics; their
             # division-safe scratch is not a physical state to qualify.
             p.wave_diagnostic[:,~active]=0.

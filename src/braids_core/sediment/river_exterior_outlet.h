@@ -22,16 +22,30 @@ extern "C" __declspec(dllexport) void mobile_threads(int n){omp_set_dynamic(0);o
 
 struct OutletWork {
  double part[3][128],lo,hi,eta,residual,area,width,rate;
- int count,changed,error,done;
+ int count,changed,error,done,stagnant;
 };
+
+// A linear face extrapolation across a lower exterior bed is not resolvable
+// when it implies a depth arbitrarily larger than the cell-average inventory.
+// Bound downward bed extrapolation by local water depth in the thinnest
+// wet-front cells. Blend continuously back to the unmodified face geometry
+// between 0.1 and 1 mm of cell-average water. The bound tends to a dry face
+// as the cell dries; it adds neither a water film nor water mass.
+LOCAL double outlet_resolved_bed(int f,const int*owner,const double*q,const double*z,const double*bed){
+ int c=owner[f];double h=fmax(q[c],0.);
+ if(h>=1.e-3)return bed[f];
+ double bounded=fmax(bed[f],z[c]-h),blend=fmin(1.,fmax(0.,(h-1.e-4)/9.e-4));
+ blend=blend*blend*(3.-2.*blend);
+ return bed[f]+(bounded-bed[f])*(1.-blend);
+}
 
 LOCAL void outlet_residual(OutletWork&w,int b,double eta,double gravity,double dry,
  const int*offset,const int*faces,const int*branch,const double*invariant,
- const double*bed,const double*length){
+ const double*bed,const double*length,const int*owner,const double*q,const double*z){
  LANES {
   double a=0.,width=0.,rate=0.;
   for(int k=offset[b]+lane;k<offset[b+1];k+=128){int f=faces[k];if(branch[f]!=1)continue;
-   double h=fmax(eta-bed[f],0.);if(h<=dry)continue;
+   double h=fmax(eta-outlet_resolved_bed(f,owner,q,z,bed),0.);if(h<=dry)continue;
    a+=h*length[f];width+=length[f];rate+=h*(invariant[f]-2.*sqrt(gravity*h))*length[f];
   }
   w.part[0][lane]=a;w.part[1][lane]=width;w.part[2][lane]=rate;
@@ -53,7 +67,7 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
  LEADER {w.error=0;w.done=0;w.eta=0.;w.area=0.;w.width=0.;w.rate=0.;}
  LANES {
   for(int k=offset[b]+lane;k<offset[b+1];k+=128){int f=faces[k],c=owner[f];
-   branch[f]=0;invariant[f]=0.;double h0=q[c],h=fmax(h0+z[c]-bed[f],0.);
+   branch[f]=0;invariant[f]=0.;double h0=q[c],h=fmax(h0+z[c]-outlet_resolved_bed(f,owner,q,z,bed),0.);
    if(h0<=dry || h<=dry)continue;
    double un=(q[n+c]*normal[f]+q[2*n+c]*normal[nf+f])/h0,wave=sqrt(gravity*h);
    if(un < -tol*fmax(1.,fabs(un)))continue;
@@ -68,7 +82,7 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
   LANES {
    double lo=INF_VALUE,hi=-INF_VALUE,count=0.;
    for(int k=offset[b]+lane;k<offset[b+1];k+=128){int f=faces[k];if(branch[f]!=1)continue;
-    lo=fmin(lo,bed[f]);hi=fmax(hi,q[owner[f]]+z[owner[f]]);count+=1.;
+    lo=fmin(lo,outlet_resolved_bed(f,owner,q,z,bed));hi=fmax(hi,q[owner[f]]+z[owner[f]]);count+=1.;
    }
    w.part[0][lane]=lo;w.part[1][lane]=hi;w.part[2][lane]=count;
   }
@@ -81,7 +95,7 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
   }
   SYNC;
   if(w.done)break;
-  outlet_residual(w,b,w.lo,gravity,dry,offset,faces,branch,invariant,bed,length);
+  outlet_residual(w,b,w.lo,gravity,dry,offset,faces,branch,invariant,bed,length,owner,q,z);
   if(w.residual<0.){
    // As in the native characteristic definition, unresolved controlled
    // depths close rather than adding an artificial film or halving forever.
@@ -89,18 +103,22 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
    LEADER {w.done=1;w.area=w.width=w.rate=0.;w.eta=w.lo;}
    SYNC;break;
   }
-  outlet_residual(w,b,w.hi,gravity,dry,offset,faces,branch,invariant,bed,length);
+  outlet_residual(w,b,w.hi,gravity,dry,offset,faces,branch,invariant,bed,length,owner,q,z);
   for(int j=0;j<60 && w.residual>0.;++j){
    LEADER {w.hi=w.lo+2.*(w.hi-w.lo);}
-   SYNC;outlet_residual(w,b,w.hi,gravity,dry,offset,faces,branch,invariant,bed,length);
+   SYNC;outlet_residual(w,b,w.hi,gravity,dry,offset,faces,branch,invariant,bed,length,owner,q,z);
   }
   if(w.residual>0. || !isfinite(w.residual)){
    LEADER {w.error=1;}
    SYNC;break;
   }
   for(int j=0;j<90;++j){
-   LEADER {w.eta=w.lo+.5*(w.hi-w.lo);}
-   SYNC;outlet_residual(w,b,w.eta,gravity,dry,offset,faces,branch,invariant,bed,length);
+   LEADER {w.eta=w.lo+.5*(w.hi-w.lo);w.stagnant=(w.eta==w.lo || w.eta==w.hi);}
+   SYNC;
+   // The final midpoint and acceptance residual below are unchanged. Once
+   // rounded to an endpoint, further bisections cannot improve the root.
+   if(w.stagnant)break;
+   outlet_residual(w,b,w.eta,gravity,dry,offset,faces,branch,invariant,bed,length,owner,q,z);
    LEADER {if(w.residual>0.)w.lo=w.eta;else w.hi=w.eta;}
    SYNC;
   }
@@ -109,7 +127,7 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
   LANES {
    int changed=0;
    for(int k=offset[b]+lane;k<offset[b+1];k+=128){int f=faces[k];if(branch[f]!=1)continue;
-    double h=fmax(w.eta-bed[f],0.),un=invariant[f]-2.*sqrt(gravity*h);
+    double h=fmax(w.eta-outlet_resolved_bed(f,owner,q,z,bed),0.),un=invariant[f]-2.*sqrt(gravity*h);
     if(h<=dry || un < -tol){branch[f]=0;++changed;}
    }
    w.part[0][lane]=changed;
@@ -118,7 +136,7 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
   LEADER {w.changed=0;for(int lane=0;lane<128;++lane)w.changed+=int(w.part[0][lane]);}
   SYNC;
   if(w.changed)continue;
-  outlet_residual(w,b,w.eta,gravity,dry,offset,faces,branch,invariant,bed,length);
+  outlet_residual(w,b,w.eta,gravity,dry,offset,faces,branch,invariant,bed,length,owner,q,z);
   LEADER {
    double qc=w.width>0.?sqrt(gravity*w.area*w.area*w.area/w.width):0.;
    if(w.area<=0. || w.width<=0. || !isfinite(w.residual) || fabs(w.residual)>1e-10*fmax(qc,1.))w.error=2;
@@ -134,12 +152,12 @@ LOCAL void outlet_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,do
  if(w.error)return;
  LANES {
   for(int k=offset[b]+lane;k<offset[b+1];k+=128){int f=faces[k],c=owner[f];
-   double h0=q[c],geom=fmax(h0+z[c]-bed[f],0.),h=geom,nx=normal[f],ny=normal[nf+f];
+   double h0=q[c],geom=fmax(h0+z[c]-outlet_resolved_bed(f,owner,q,z,bed),0.),h=geom,nx=normal[f],ny=normal[nf+f];
    double ux=0.,uy=0.;if(h0>dry){ux=q[n+c]/h0;uy=q[2*n+c]/h0;}
    else h=0.;
    double un=ux*nx+uy*ny,tx=ux-un*nx,ty=uy-un*ny;
    if(branch[f]==0)un=0.;
-   else if(branch[f]==1){h=fmax(w.eta-bed[f],0.);un=invariant[f]-2.*sqrt(gravity*h);}
+   else if(branch[f]==1){h=fmax(w.eta-outlet_resolved_bed(f,owner,q,z,bed),0.);un=invariant[f]-2.*sqrt(gravity*h);}
    if(!isfinite(h) || !isfinite(un) || sqrt(un*un+tx*tx+ty*ty)>speed_limit){face_status[f]=3;continue;}
    double water=0.,fx=0.,fy=0.;
    if(h>dry){
@@ -267,8 +285,10 @@ LOCAL void weir_group(OutletWork&w,int b,int nf,int n,int nb,double gravity,doub
   }
   if(!w.error){
    for(int j=0;j<90;++j){
-    LEADER {w.eta=w.lo+.5*(w.hi-w.lo);}
-    SYNC;weir_residual(w,b,w.eta,gravity,dry,crest,factor,offset,faces,branch,invariant,bed,length,owner,q,z);
+    LEADER {w.eta=w.lo+.5*(w.hi-w.lo);w.stagnant=(w.eta==w.lo || w.eta==w.hi);}
+    SYNC;
+    if(w.stagnant)break;
+    weir_residual(w,b,w.eta,gravity,dry,crest,factor,offset,faces,branch,invariant,bed,length,owner,q,z);
     LEADER {if(w.residual>0.)w.lo=w.eta;else w.hi=w.eta;}
     SYNC;
    }

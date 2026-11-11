@@ -91,7 +91,7 @@ class JiangCaoAdaptive:
             protected_finest!=tuple(sorted(set(protected_finest))) or
             any(type(i) is not int or i<hierarchy.offsets[-2] or i>=hierarchy.count for i in protected_finest)):
             raise ValueError('Protection requires sorted unique explicit finest node IDs')
-        self.protected_finest=protected_finest
+        self.protected_finest=protected_finest;self.settings=settings
         self.hierarchy=hierarchy;self.initial_leaves=self._leaves(initial_leaves)
         self.leaves=self.initial_leaves;self.factory=factory;self.settings=settings
         self._lock=threading.Lock();self._geometry=self._geometry_hash()
@@ -127,7 +127,8 @@ class JiangCaoAdaptive:
         leaves=tuple(leaves)
         if leaves!=tuple(sorted(set(leaves))):raise ValueError('Sorted unique leaves required')
         self.hierarchy.leaf_cover(leaves)
-        if RiverLeafController.pin_boundaries(self.hierarchy,leaves,self.protected_finest)!=leaves:
+        if RiverLeafController.pin_boundaries(self.hierarchy,leaves,self.protected_finest,
+                refine_open_boundaries=self.settings.open_boundary_enabled)!=leaves:
             raise ValueError('Open boundaries and explicit process protection must be finest leaves')
         return leaves
 
@@ -184,6 +185,7 @@ class JiangCaoAdaptive:
             # hydraulic carrier is only a read-only view of the JC state.
             c=RiverLeafController.__new__(RiverLeafController)
             c.hierarchy=t;c.leaves=self.leaves;c.owner=a.a;c.survey_leaves=self.protected_finest
+            c.open_boundary_refinement=self.settings.open_boundary_enabled
             c._mesh_cache=self._meshes;c._map_cache=self._maps;c._pinned_cache={}
             bits,active,_,_=self.indicators.evaluate(c,None,None,self.settings)
             raw=np.zeros(t.count,np.int32);ids=np.array(self.leaves);levels=t.node_level[ids]

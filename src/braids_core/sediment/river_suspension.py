@@ -46,7 +46,7 @@ class SplitCapacity(RiverMPM):
 
 def install_suspension(a,folder,*,initial_concentration,boundary_concentration,
                        bed_factor=1.,sus_factor=1.,diffusivity=0.,temperature=20.,cref=1600.,enabled=True,
-                       capacity=None,hiding='none',corrections=None):
+                       capacity=None,hiding='none',corrections=None,espir=1.):
     """Compose before banks/collapse, with one accepted column transaction.
 
     Positive bed exchange deposits material. Its opposite enters suspended inventory
@@ -105,6 +105,8 @@ def install_suspension(a,folder,*,initial_concentration,boundary_concentration,
     # ripple factor by general-formula RipFac=1 in BOTH capacity and Jacobian.
     previous_faces=a.bed_faces
     install_mpm(a,folder,hiding='none')
+    if capacity is None and espir!=1.:
+        raise ValueError('The legacy unresolved capacity cannot use a nondefault Espir; select an explicit resolved model')
     if capacity is None:
         a.capacity=[SplitCapacity(a.backend,diameter=d,chezy=p.chezy,threads=p.flow.threads,bed_factor=bed_factor) for d in a.methods.diameter_m]
     else:
@@ -115,7 +117,7 @@ def install_suspension(a,folder,*,initial_concentration,boundary_concentration,
             reference=corrections[1]["van_rijn_reference"] if capacity["method"]=="capacity.van_rijn_1993" else None,
             skin_shear=(corrections[1]["skin_shear"]
                         if corrections[0]["shear"]=="shear.soulsby_clarke_skin" else None),
-            transport='bedload' if gp or dl or classic or settling_only else corrections[0]["transport"])
+            transport='bedload' if gp or dl or classic or settling_only else corrections[0]["transport"],espir=espir)
             for d,rho in zip(a.methods.diameter_m,a.material.definition.solid_density)]
     # General RipFac=1 has no D90/ripple calculation. Reuse the derivative's
     # call interface without running the unrelated mixture-percentile solve.

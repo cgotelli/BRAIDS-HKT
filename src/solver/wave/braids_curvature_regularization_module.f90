@@ -126,7 +126,7 @@ contains
   real(8),intent(out) :: filtered(nc),residual
   integer,intent(out) :: iterations
   logical,intent(out) :: ok
-  ! Optional practical tolerances belong to the braids_support/runtime identity.
+  ! Optional practical tolerances belong to the validation/runtime identity.
   ! Omitting them preserves the stringent historical kernel contract.
   real(8),intent(in),optional :: relative_tolerance,absolute_tolerance
   real(8) :: a,b,w,rho,rhonew,alpha,beta,denominator,scale,tolerance,entry

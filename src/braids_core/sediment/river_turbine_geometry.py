@@ -13,10 +13,10 @@ class GeometryIndex:
     """One immutable world-coordinate lookup shared by all rotors on a mesh."""
     def __init__(self,cells,*,cancelled=None):
         self.cells=cells
-        polygons=[]
-        for i,c in enumerate(cells):
-            if i%256==0 and cancelled and cancelled():raise InterruptedError('Turbine geometry setup cancelled')
-            polygons.append(Polygon(c.vertices_xy,getattr(c,'holes_xy',())))
+        from braids_core.boundaries.uniform_geometry import cell_polygons
+        def stop():
+            if cancelled and cancelled():raise InterruptedError('Turbine geometry setup cancelled')
+        polygons=cell_polygons(cells,stop=stop)
         self.polygons=tuple(polygons)
         self.index=STRtree(self.polygons)
         self.area=np.array([c.area_m2 for c in cells]);self.xy=np.array([c.centroid_xy for c in cells])

@@ -26,6 +26,23 @@ GLOBAL=('secondary_source_ledger','secondary_projection_ledger','class_bank_gros
 SCOPE='current-river-conservative-zero-time-transfer-v6-surveyed-bank-history'
 
 
+def _coordinate_roundoff_overlap(left,right,area):
+    """Recognize only boundary slivers within two coordinate ULPs.
+
+    Projected vertices can round independently on opposite sides of a shared
+    edge. This does not change the authoritative finite-volume cell areas.
+    The area bound alone is insufficient: both polygon interiors must also
+    be disjoint after removing that tiny boundary strip. Never use this to
+    repair a geometrically unresolved cell or a genuine nonnested overlap.
+    """
+    width=2*np.spacing(max(1.,max(abs(v) for v in (*left.bounds,*right.bounds))))
+    if (width>=1e-6*np.sqrt(min(left.area,right.area)) or
+        area>width*(left.length+right.length)):
+        return False
+    a=left.buffer(-width);b=right.buffer(-width)
+    return not a.is_empty and not b.is_empty and a.intersection(b).area==0.
+
+
 def validate_wet_dry_transfer(q,secondary,suspended,mapping,dry,xp):
     # An exact one-to-one copy does not coarsen through the wet/dry tolerance.
     # Accepted inundation fronts can contain tiny positive depth and momentum;
@@ -136,7 +153,9 @@ class CellMap:
                 shapes=np.asarray(src,dtype=object);left,right=pairs
                 area=shapely.area(shapely.intersection(shapes[left],shapes[right]))
                 actual=shapely.area(shapes)
-                disjoint=bool(np.all(area<=1e-13*np.minimum(actual[left],actual[right])))
+                suspect=np.flatnonzero(area>1e-13*np.minimum(actual[left],actual[right]))
+                disjoint=all(_coordinate_roundoff_overlap(src[left[k]],src[right[k]],area[k])
+                             for k in suspect)
             if disjoint:
                 n=len(src)
                 return cls.create(np.arange(n+1),np.arange(n),np.ones(n),sa,ta)
@@ -145,6 +164,7 @@ class CellMap:
                 area=p.intersection(src[j]).area
                 if area>1e-13*min(p.area,src[j].area):
                     if authoritative:
+                        if _coordinate_roundoff_overlap(p,src[j],area):continue
                         tol=32*np.spacing(max(1.,max(abs(v) for v in (*p.bounds,*src[j].bounds))))*(p.length+src[j].length)
                         if abs(area-min(p.area,src[j].area))>max(1e-12,tol):raise ValueError('Authoritative-area map requires nested cells')
                         area=min(sa[j],ta[i])
@@ -180,8 +200,8 @@ class TransferEngine:
 def boundary_map(old,new):
     """Integrated exterior flux histories; never redistribute them to walls."""
     src=np.flatnonzero(old['neighbour']<0);dst=set(np.flatnonzero(new['neighbour']<0));off=[0];ids=[];w=[];coverage=np.zeros(old['nf']);target_coverage=np.zeros(new['nf'])
-    # Current AMR pins inlet/outlet boundary cells at the finest level. Their
-    # faces therefore survive as an exact permutation, not a new partition.
+    # With optional inlet/outlet finest protection, unchanged faces still
+    # survive as an exact permutation rather than requiring interpolation.
     # Keep that identity exact: interval intersections at large GIS coordinates
     # invent tiny overlaps between adjacent unchanged oblique segments.
     def key(data,i):
@@ -192,7 +212,7 @@ def boundary_map(old,new):
             if j in dst:ids.append(original[key(new,j)]);w.append(1.)
             off.append(len(ids))
         return np.array(off,np.int32),np.array(ids,np.int32),np.array(w,float)
-    # Walls may now regrid independently while inlets/outlets remain finest.
+    # Walls and optionally open sections may change their face partition.
     # Preserve each unchanged face, even when the WHOLE exterior is not a
     # permutation. Otherwise GIS-coordinate roundoff invents overlap with an
     # adjacent unchanged open face and repeatedly grows its integrated ledger.
@@ -253,9 +273,31 @@ def exterior_contract(a):
     is checked against physical overlaps separately, never omitted from checks.
     """
     omit={'initial_sha256','forcing_sha256','initial_mass_sha256','initial_sv_sha256','fractions_sha256'}
-    return {name:None if name not in a.identity else
-            {k:v for k,v in a.identity[name].items() if k not in omit}
+    def stable(value):
+        if isinstance(value,dict):
+            # These are indices into the current face array, not a user
+            # setting.  A normal-depth outlet deliberately rebuilds its
+            # connected face chains after every regrid; transfer below then
+            # authenticates its physical-boundary overlap and state.
+            return {k:stable(v) for k,v in value.items() if k not in omit|{'section_faces'}}
+        if isinstance(value,list):return [stable(v) for v in value]
+        if isinstance(value,tuple):return tuple(stable(v) for v in value)
+        return value
+    return {name:None if name not in a.identity else stable(a.identity[name])
             for name in ('exterior_bed','exterior_sediment','exterior_bedforms')}
+
+
+def _contract_difference(left,right,path=''):
+    """Return the first immutable-contract path that differs, for diagnostics."""
+    if isinstance(left,dict) and isinstance(right,dict):
+        for key in sorted(set(left)|set(right),key=str):
+            if key not in left or key not in right:
+                return path+'.'+str(key) if path else str(key)
+            found=_contract_difference(left[key],right[key],path+'.'+str(key) if path else str(key))
+            if found is not None:return found
+        return None
+    if left!=right:return path
+    return None
 
 
 def physical_contract(a):
@@ -290,15 +332,18 @@ def stage_explicit_clock(source,target):
     retain their existing remesh behavior.
     """
     from .river_explicit import RiverExplicit, METHOD, MAX_CFL
+    from braids_core.hydraulics.river_hllc import RiverHLLC, METHOD as HLLC_METHOD
+    methods={RiverExplicit:(METHOD,'river_explicit'),RiverHLLC:(HLLC_METHOD,'river_hllc')}
     old=getattr(source,'midpoint',None);new=getattr(target,'midpoint',None)
-    explicit=lambda a,c: (isinstance(c,RiverExplicit) or
-        a.identity.get('integrator')==METHOD or 'river_explicit' in a.identity)
+    explicit=lambda a,c: (isinstance(c,tuple(methods)) or
+        a.identity.get('integrator') in (METHOD,HLLC_METHOD) or any(key in a.identity for _,key in methods.values()))
     if not (explicit(source,old) or explicit(target,new)):return None
-    if type(old) is not RiverExplicit or type(new) is not RiverExplicit:
+    if type(old) not in methods or type(new) is not type(old):
         raise ValueError('Regrid explicit controller changed')
+    method,key=methods[type(old)]
     for owner,controller in ((source,old),(target,new)):
-        if (owner.identity.get('integrator')!=METHOD or controller.identity.get('method')!=METHOD or
-            owner.identity.get('river_explicit')!=controller.identity):
+        if (owner.identity.get('integrator')!=method or controller.identity.get('method')!=method or
+            owner.identity.get(key)!=controller.identity):
             raise ValueError('Regrid explicit method or controller identity changed')
         cfl=controller.cfl
         if (isinstance(cfl,bool) or not np.isfinite(cfl) or not 0<cfl<=MAX_CFL or
@@ -465,7 +510,11 @@ def transfer(source,target,mapping,*,cancelled=lambda:False,reject_after_candida
     if source.backend!=target.backend:raise ValueError('Regrid cannot change CPU/GPU backend')
     if source.columns.pending is not None or p._open or target.columns.pending is not None or t._open:raise ValueError('Regrid requires accepted owners')
     if target.time or target.steps:raise ValueError('Regrid target must be fresh and unpublished')
-    if physical_contract(source)!=physical_contract(target):raise ValueError('Regrid physics changed')
+    source_contract=physical_contract(source);target_contract=physical_contract(target)
+    if source_contract!=target_contract:
+        changed=[name for name in source_contract if source_contract[name]!=target_contract.get(name)]
+        detail=[_contract_difference(source_contract[name],target_contract.get(name),name) or name for name in changed]
+        raise ValueError('Regrid physics changed: '+', '.join(detail))
     explicit_clock=stage_explicit_clock(source,target)
     if not np.allclose(host(source.columns.area),mapping.source_area,atol=1e-13,rtol=1e-11) or not np.allclose(host(target.columns.area),mapping.target_area,atol=1e-13,rtol=1e-11):raise ValueError('Regrid actual areas differ')
     # No material/forcing change may hide behind a mesh change.
@@ -525,12 +574,19 @@ def transfer(source,target,mapping,*,cancelled=lambda:False,reject_after_candida
     water_res=float(xp.sum(q[0]*rebuilt.area)-xp.sum(source.q[0]*source.columns.area))
     mom_res=host((q[1:]*rebuilt.area).sum(1)-(source.q[1:]*source.columns.area).sum(1))
     secondary_res=float(xp.sum(state['W']*rebuilt.area)-xp.sum(p.W*source.columns.area))
-    eps=64*np.finfo(float).eps
+    # The old and new totals are independent parallel reductions.  In a
+    # terrain-aware split, the child-volume solve and two GPU reductions add
+    # several legal rounding stages before the comparison.  This allowance is
+    # still only roundoff-scale (2048 eps), not a physical mass tolerance.
+    eps=2048*np.finfo(float).eps
     mass_tol=max(1e-9,eps*float(np.max(abs(before))))
     water_tol=max(1e-10,eps*float(xp.sum(xp.abs(source.q[0])*source.columns.area)))
     momentum_tol=max(1e-10,eps*float(xp.sum(xp.abs(source.q[1:])*source.columns.area)))
     secondary_tol=max(1e-10,eps*float(xp.sum(xp.abs(p.W)*source.columns.area)))
-    if np.max(abs(after-before))>mass_tol or abs(water_res)>water_tol or np.max(abs(mom_res))>momentum_tol or abs(secondary_res)>secondary_tol:raise ValueError('Regrid conservation failed')
+    if np.max(abs(after-before))>mass_tol or abs(water_res)>water_tol or np.max(abs(mom_res))>momentum_tol or abs(secondary_res)>secondary_tol:
+        raise ValueError('Regrid conservation failed: mass='+str(float(np.max(abs(after-before))))+'/'+str(mass_tol)+
+            ', water='+str(water_res)+'/'+str(water_tol)+', momentum='+str(host(mom_res).tolist())+'/'+str(momentum_tol)+
+            ', secondary='+str(secondary_res)+'/'+str(secondary_tol))
     if cancelled():raise InterruptedError('Regrid cancelled before publication')
     if reject_after_candidate:raise RuntimeError('Injected private regrid rejection')
     # The existing column object is captured by suspension closures: replace

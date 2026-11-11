@@ -1,5 +1,6 @@
 """Named boundary editor text; only explicit active projections can execute."""
 from copy import deepcopy
+import json
 from .river_open_boundary import (HYDRAULICS, PARAMETERS, BED_METHODS, COMPOSITION_METHODS,
     STAGE_POLICIES, INITIALS, new_state, resolve, exact, finite)
 from .river_exterior_schedule import BED_FIELDS, COMPOSITION_FIELDS
@@ -29,7 +30,12 @@ def numeric(text,label):
 def project_slot(source,fields,table_fields,label):
     """Tables replace their constant fields, without parsing inactive text."""
     schedule=source['schedule'];linear=schedule['method']==LINEAR
-    values={k:('mesh' if k=='energy_slope' and source['values'][k]=='mesh' else
+    def curve(text):
+        try:rows=json.loads(text)
+        except (TypeError,ValueError) as exc:raise ValueError(label+': enter discharge/elevation rows') from exc
+        if not isinstance(rows,list):raise ValueError(label+': enter discharge/elevation rows')
+        return [[numeric(v,label+' Q–H') for v in row] if isinstance(row,list) else row for row in rows]
+    values={k:(curve(source['values'][k]) if k=='rating_curve' else 'mesh' if k=='energy_slope' and source['values'][k]=='mesh' else
                numeric(source['values'][k],label+' '+k)) for k in fields if not linear or k not in table_fields}
     if not linear:return values,dict(method=CONSTANT)
     if not table_fields:raise ValueError(label+': this method has no time-table fields')
@@ -44,6 +50,13 @@ def project_slot(source,fields,table_fields,label):
 class BoundaryDraft:
     def __init__(self,value=None):
         self.data=deepcopy(value) if value is not None else dict(schema=2,boundaries={})
+        # Old editor drafts predate this inactive choice; preserve every
+        # existing value while supplying its new empty method slot.
+        for roles in self.data.get('boundaries',{}).values():
+            outlet=roles.get('outlet') if isinstance(roles,dict) else None
+            if isinstance(outlet,dict) and isinstance(outlet.get('controls'),dict):
+                outlet['controls'].setdefault('outlet.normal_depth',slot(HYDRAULICS['outlet.normal_depth'][2]))
+                outlet['controls'].setdefault('outlet.rating_curve',slot(HYDRAULICS['outlet.rating_curve'][2]))
         self.snapshot()
 
     def ensure(self,ids,kinds):
@@ -132,7 +145,7 @@ class BoundaryDraft:
         hydraulics=project['settings']['hydraulics'];ids=project['settings']['columns']['fraction_ids']
         kinds={name:HYDRAULICS[r['method']][1] for name,r in hydraulics.items()};self.ensure(ids,kinds)
         def overlay(slot,values,schedule,fields):
-            for k,v in values.items():slot['values'][k]=str(v)
+            for k,v in values.items():slot['values'][k]=json.dumps(v) if k=='rating_curve' else str(v)
             slot['schedule']['method']=schedule['method']
             if schedule['method']==CONSTANT:return
             old=slot['schedule']['rows'];rows=[]

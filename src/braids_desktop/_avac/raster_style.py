@@ -1,7 +1,7 @@
 """Display-only colour ramps and raster style editor."""
 from .i18n import tr, trf, tr_list, number, parse_number
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                               QDoubleSpinBox, QFormLayout, QLabel, QSpinBox)
+                               QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox)
 
 PALETTES = {
     "Terrain": ["#354e49", "#6b7e64", "#a29e7a", "#b9b49d", "#e4e8e3"],
@@ -24,7 +24,9 @@ class RasterStyleDialog(QDialog):
         self.palette = QComboBox()
         form.addRow(tr("Palette"), self.palette)
         self.automatic = QCheckBox(tr("Use data range"))
-        form.addRow(tr(self.automatic))
+        range_row=QHBoxLayout();range_row.addWidget(self.automatic)
+        self.visible_range=QPushButton(tr('Use visible range'));range_row.addWidget(self.visible_range)
+        form.addRow(range_row);self.visible_range.clicked.connect(self.use_visible_range)
         from ..presentation import DisplaySpinBox
         self.low, self.high = DisplaySpinBox(), DisplaySpinBox()
         for spin in (self.low, self.high):
@@ -67,9 +69,20 @@ class RasterStyleDialog(QDialog):
         self.low.setEnabled(limits is not None)
         self.high.setEnabled(limits is not None)
         self.zero.setChecked(style.get("zero_transparent", self.view.default_zero_transparent(key)))
-        self.zero.setEnabled(not key.startswith('result:'))
+        # This is a rendering-only choice.  In particular, it must remain
+        # adjustable while live results are being viewed; it never modifies a
+        # model setting, saved result, solver state or output field.
+        self.zero.setEnabled(True)
+        self.zero.setToolTip(tr('Display only: this does not change stored results or the running simulation.'))
         self.legend.setChecked(style.get("legend_visible", True))
         self.opacity.setValue(round(style.get("opacity", 1.)*100))
+
+    def use_visible_range(self):
+        try:
+            low,high=self.view.visible_range_for(self.layer.currentData())
+            self.automatic.setChecked(False);self.low.setValue(low);self.high.setValue(high)
+            self.error.setText(tr('Visible range selected. Press Apply to keep it when zooming.'))
+        except ValueError as exc:self.error.setText(str(exc))
 
     def apply(self):
         if not self.automatic.isChecked() and self.high.value() <= self.low.value():

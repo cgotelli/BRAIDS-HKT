@@ -54,6 +54,26 @@ LOCAL double exterior_chezy(int mode,double h,double parameter,double floor,doub
  return waqua?18.*log10(12.*fmax(.5,d/parameter)):
   sqrt(gravity)/.41*log1p(30.*d/(exp(1.)*parameter));
 }
+// Outward 1-wave half-Riemann solution with prescribed exterior depth.
+// A finite incoming bore can enter even when the interior is supercritical.
+// Shock curve: Rankine-Hugoniot; rarefaction: u+2*sqrt(g*h) constant.
+// Return 0 for a free release, 1 for the target, 2 for a sonic fan trace.
+LOCAL int exterior_stage_wave(double h,double un,double target,double gravity,
+ double&depth,double&velocity){
+ double c=sqrt(gravity*h);depth=h;velocity=un;
+ if(target>h){
+  double k=sqrt(.5*gravity*(1./target+1./h));
+  double shock=un-target*k;
+  if(shock>=0.)return 0;
+  depth=target;velocity=un-(target-h)*k;return 1;
+ }
+ if(un-c>=0.)return 0;
+ double cb=sqrt(gravity*target),ub=un+2.*(c-cb);
+ if(ub-cb>0. || target==0.){
+  velocity=(un+2.*c)/3.;depth=velocity*velocity/gravity;return 2;
+ }
+ depth=target;velocity=ub;return 1;
+}
 ENTRY void exterior_weights(int nf,int n,int nb,double dry,double gravity,
  int roughness_mode,double floor,int waqua,const int*owner,const int*bid,
  const int*selected,const int*mode,const double*q,const double*z,const double*bed,
@@ -79,7 +99,7 @@ ENTRY void exterior_flux(int nf,int n,int nb,double gravity,double dry,double sp
   status[i]=0;for(int k=0;k<3;++k){trace[k*nf+i]=0.;flux[k*nf+i]=0.;}
   if(!selected[i])continue;
   int b=bid[i],c=owner[i],m=mode[b];double h0=q[c],nx=normal[i],ny=normal[nf+i];
-  if(m==4 || m==5)continue; // Resident characteristic section owner writes this outlet.
+  if(m==4 || m==5 || m==10 || m==11)continue; // Resident characteristic section owner writes this outlet.
   double h=fmax(h0+z[c]-bed[i],0.),geometric=h,ux=0.,uy=0.;
   if(h0>dry){ux=q[n+c]/h0;uy=q[2*n+c]/h0;}
   double un=ux*nx+uy*ny,tx=ux-un*nx,ty=uy-un*ny,normal_speed=0.;
@@ -105,31 +125,32 @@ ENTRY void exterior_flux(int nf,int n,int nb,double gravity,double dry,double sp
   }else if(m==2){
    double prescribed=fmax(forcing[nb+b]-bed[i],0.);
    if(stage_policy[b] && (h0<=dry || h<=dry) && prescribed>dry){status[i]=4;continue;}
-   if(stage_policy[b] && h0<=dry)h=0.;
+   // A lower extrapolated face bed does not give a dry physical owner any
+   // water to export. Keep the outflow-only shoreline closed until its
+   // actual cell is wetted; prescribed inlets retain their separate admission.
+   // Backflow/inundation rejection above remains explicit and unchanged.
+   if(h0<=dry)h=0.;
    // A dry exterior trace still exerts the interior hydrostatic bed-step
    // force below. Only a genuinely dry physical owner has zero pressure.
    if(h>dry){
-    double u=-un,wave=sqrt(gravity*h),invariant=u-2.*wave;
-    if(u<=-wave)normal_speed=un;
-    else if(u>=wave){
+    double wave=sqrt(gravity*h);
+    if(un<=-wave){
      if(stage_policy[b]){status[i]=5;continue;}
      normal_speed=0.;tx=ty=0.;
     }
     else{
-     double target=fmax(forcing[nb+b]-bed[i],0.),ub;
-     if(target<=dry || invariant<=-3.*sqrt(gravity*target)){
-      target=(invariant/3.)*(invariant/3.)/gravity;ub=-sqrt(gravity*target);
-     }else ub=invariant+2.*sqrt(gravity*target);
-     if(ub>0. && stage_policy[b]){
+     double target=fmax(forcing[nb+b]-bed[i],0.),hb,ub;
+     exterior_stage_wave(h,un,target,gravity,hb,ub);
+     if(ub<0. && stage_policy[b]){
       // One outgoing characteristic plus prescribed water level. Incoming
       // tangential momentum is explicit clear transverse flow, not donor
       // extrapolation from an interior outflow. Stage alone cannot specify
       // both incoming gravity characteristics.
-      if(ub>=sqrt(gravity*target)){status[i]=5;continue;}
-      h=target;normal_speed=-ub;tx=ty=0.;
+      if(ub<=-sqrt(gravity*hb)){status[i]=5;continue;}
+      h=hb;normal_speed=ub;tx=ty=0.;
      }
-     else if(target<=dry || ub>0.){normal_speed=0.;tx=ty=0.;}
-     else{h=target;normal_speed=-ub;}
+     else if(ub<0.){normal_speed=0.;tx=ty=0.;}
+     else{h=hb;normal_speed=ub;}
     }
    }
   }else{status[i]=2;continue;}

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import codecs
+import shutil
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -16,6 +17,25 @@ from braids_core import river_folder
 from braids_core.river_project import identity, load_project
 from .services import project_member, update_project_session
 from .presentation import display_number
+
+
+def remove_old_runs(project_root, *, keep=None, protected=None):
+    """Remove finished BRAIDS run directories inside this project."""
+    root=Path(project_root).resolve();runs=(root/'runs').resolve()
+    if runs.parent!=root or not runs.is_dir() or (root/'runs').is_symlink():return []
+    keep=Path(keep).resolve() if keep else None
+    protected=Path(protected).resolve() if protected else None
+    removed=[]
+    for path in runs.iterdir():
+        if not path.name.startswith('run_') or not path.is_dir() or path.is_symlink() or getattr(path,'is_junction',lambda:False)():continue
+        resolved=path.resolve()
+        if resolved.parent!=runs or resolved==keep or (protected and protected.is_relative_to(resolved)):continue
+        try:
+            status=json.loads((resolved/'STATUS.json').read_text(encoding='utf-8'))
+            if status.get('status') not in ('complete','segment_complete','failed','cancelled'):continue
+            shutil.rmtree(resolved);removed.append(path.name)
+        except (OSError,ValueError,TypeError):continue
+    return removed
 
 
 class DesktopRunner(QObject):
@@ -29,7 +49,7 @@ class DesktopRunner(QObject):
         super().__init__(parent)
         self.runtime = Path(runtime).resolve()
         self.python = Path(python or sys.executable).resolve()
-        if self.python.name.lower()=='pythonw.exe':self.python=self.python.with_name('python.exe')
+        if self.python.name.lower() in ('pythonw.exe','braids.exe'):self.python=self.python.with_name('python.exe')
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyReadStandardOutput.connect(self._read_output)
@@ -42,6 +62,7 @@ class DesktopRunner(QObject):
         self.output = self.log_path = self.stop_file = self.project_root = None
         self.cancel_requested = False
         self._frame_stamp = self._last_progress = None
+        self._checkpoint_stamp=None
         self._event = None
         self._output_decoder=codecs.getincrementaldecoder('utf-8')(errors='replace')
 
@@ -101,7 +122,7 @@ class DesktopRunner(QObject):
             restart = project_member(root, restart)
             if not restart.is_file():
                 raise FileNotFoundError(restart)
-            from braids_core.river_worker import checkpoint_identity
+            from braids_core.river_worker import checkpoint_identities
             try:
                 # Fast UI preflight reads only the small identity member. The
                 # authenticated worker still verifies the complete payload.
@@ -114,7 +135,7 @@ class DesktopRunner(QObject):
                 for name in ('state_sha256','initialization_sha256'):
                     digest=metadata.pop(name,None)
                     if not isinstance(digest,str) or len(digest)!=64:raise ValueError('Checkpoint state checksum missing')
-                if not isinstance(checksum,str) or len(checksum)!=64 or metadata!=checkpoint_identity(original,receipt):raise ValueError('Checkpoint identity differs')
+                if not isinstance(checksum,str) or len(checksum)!=64 or metadata not in checkpoint_identities(original,receipt):raise ValueError('Checkpoint identity differs')
             except Exception as exc:
                 raise ValueError('The selected resume checkpoint does not match this project, backend, settings or runtime. '
                     'Clear "Checkpoint to resume" to start a NEW run, or select a checkpoint from exactly these saved settings.\n'+str(exc)) from exc
@@ -183,6 +204,9 @@ class DesktopRunner(QObject):
         self.cancel_requested = False
         self._output_decoder.reset()
         self._frame_stamp = self._last_progress = None
+        self._checkpoint_stamp=None
+        from .project_retention import active_marker
+        river_folder._atomic_json(active_marker(root,output.name),dict(pid=os.getpid(),action=action,output=str(output)))
         self.busy_changed.emit(True)
         self.progress.emit(0., "Validating project and authenticated runtime")
         self.timer.start()
@@ -215,6 +239,17 @@ class DesktopRunner(QObject):
     def poll(self):
         if not self.is_running:
             return
+        if self.action=='run':
+            try:
+                folder=self.project_root/'checkpoints'/self.output.name
+                stamp=folder.stat().st_mtime_ns
+                if stamp!=self._checkpoint_stamp:
+                    from .project_retention import prune_live_checkpoints
+                    selected=river_folder.folder_info(self.project_root)['session'].get('restart')
+                    count=prune_live_checkpoints(self.project_root,self.output.name,protected=(selected,self._event.get('restart')))
+                    self._checkpoint_stamp=folder.stat().st_mtime_ns
+                    if count:self._log(f'Removed {count} superseded checkpoint(s); latest accepted checkpoint retained.')
+            except (OSError,ValueError,KeyError):pass
         try:
             values = json.loads((self.output / "PROGRESS.json").read_text(encoding="utf-8"))
             phase = values.get("phase", values.get("status", ""))
@@ -278,6 +313,8 @@ class DesktopRunner(QObject):
     def _complete(self, okay, message):
         action = self.action
         self.timer.stop()
+        from .project_retention import active_marker,cleanup_project
+        active_marker(self.project_root,self.output.name).unlink(missing_ok=True)
         status = "complete" if okay else "cancelled" if self.cancel_requested else "failed"
         try:
             river_folder.record_event(self.project_root, "desktop_worker", status=status,
@@ -286,10 +323,19 @@ class DesktopRunner(QObject):
             if action=='run':session['output']=self._event['output']
             if action == "prepare" and okay:
                 session["prepared"] = self._event["prepared"]
+                session['output']=''
             checkpoint = self.output / "checkpoint.npz"
             # A produced checkpoint is recovery evidence, not a user decision to
             # resume the next run. Never auto-populate the resume editor.
             update_project_session(self.project_root, **session)
+            # Cleaning generated storage must not change the solver outcome.
+            try:
+                restart=self._event.get('restart') or river_folder.folder_info(self.project_root)['session'].get('restart')
+                result=cleanup_project(self.project_root,protected=(restart,) if restart else ())
+                if result.get('removed'):
+                    self._log(f'Project cleanup: removed {len(result["removed"])} older generated items ({result["removed_bytes"]/1e9:.3f} GB). Latest run, preparation and checkpoint retained; selected restart dependencies protected.')
+                if result.get('errors'):self._log('Some obsolete files are still in use; cleanup will retry after the next operation.')
+            except Exception as exc:self._log('Project cleanup deferred: '+str(exc))
         except Exception as exc:
             message += f"; folder history/session publication failed: {exc}"
             okay = False  # Keep all solver output; never pretend history was persisted.

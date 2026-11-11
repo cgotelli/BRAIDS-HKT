@@ -2,7 +2,7 @@
 
 The caller proposes hierarchy leaves (an indicator policy is separate) and
 provides a factory for fresh mesh-specific owners. Publication is atomic;
-inlets/outlets and mixed wet/dry groups retain finest/current resolution.
+inlet/outlet finest protection is optional. Mixed wet/dry groups retain current resolution.
 Walls alone do not impose refinement; cropped wall cells may remain coarse.
 No recursive subcycling, automatic backend choice or physics fallback.
 """
@@ -76,7 +76,9 @@ class RiverLeafController:
 
     def _initialize(self,hierarchy,leaves,owner,mesh):
         self.hierarchy=hierarchy;self.leaves=tuple(sorted(leaves));self.owner=owner
-        if any(f.neighbour<0 and f.kind in ('inlet','outlet') and
+        self.open_boundary_refinement=getattr(owner,'_open_boundary_refinement',True)
+        if type(self.open_boundary_refinement) is not bool:raise ValueError('Explicit inlet/outlet refinement switch required')
+        if self.open_boundary_refinement and any(f.neighbour<0 and f.kind in ('inlet','outlet') and
                mesh.cells[f.owner].level!=hierarchy.finest_level for f in mesh.faces):
             raise ValueError('Inlet/outlet cells must be finest leaves')
         if any(f.breakline_ids and
@@ -107,20 +109,22 @@ class RiverLeafController:
         return mesh,self._map_cache[key]
 
     @staticmethod
-    def pin_boundaries(hierarchy,leaves,required=()):
+    def pin_boundaries(hierarchy,leaves,required=(),*,refine_open_boundaries=True):
         hierarchy.leaf_cover(leaves)
+        if type(refine_open_boundaries) is not bool:raise ValueError('Explicit inlet/outlet refinement switch required')
         if any(type(v) is not int or v<0 or v>=hierarchy.count or
                hierarchy.node_level[v]!=hierarchy.finest_level for v in required):
             raise ValueError('Survey protection requires explicit finest hierarchy node IDs')
         wanted=np.zeros(hierarchy.count,dtype=int)
         wanted[list(leaves)]=hierarchy.node_level[list(leaves)]
         base=hierarchy.offsets[-2]
-        for f in hierarchy.finest.faces:
-            if f.neighbour<0 and f.kind in ('inlet','outlet'):wanted[base+f.owner]=hierarchy.finest_level
+        if refine_open_boundaries:
+            for f in hierarchy.finest.faces:
+                if f.neighbour<0 and f.kind in ('inlet','outlet'):wanted[base+f.owner]=hierarchy.finest_level
         wanted[list(required)]=hierarchy.finest_level
         result=hierarchy.balanced_leaves(wanted)
         cover=hierarchy.leaf_cover(result)
-        if any(cover[base+f.owner]!=base+f.owner for f in hierarchy.finest.faces
+        if refine_open_boundaries and any(cover[base+f.owner]!=base+f.owner for f in hierarchy.finest.faces
                if f.neighbour<0 and f.kind in ('inlet','outlet')):
             raise ValueError('Hierarchy refinement cap prevents finest inlet/outlet cells')
         if not set(required).issubset(result):
@@ -130,7 +134,8 @@ class RiverLeafController:
     def plan(self,requested):
         tree=self.hierarchy;requested=tuple(requested)
         if requested not in self._pinned_cache:
-            self._pinned_cache[requested]=self.pin_boundaries(tree,requested,self.survey_leaves)
+            self._pinned_cache[requested]=self.pin_boundaries(tree,requested,self.survey_leaves,
+                refine_open_boundaries=self.open_boundary_refinement)
         leaves=self._pinned_cache[requested]
         q=None;dry=self.owner.physics.parameters.dry;retained=set()
         for _ in range(tree.levels+1):
@@ -146,7 +151,8 @@ class RiverLeafController:
             wanted=np.zeros(tree.count,dtype=int)
             wanted[list(leaves)]=tree.node_level[list(leaves)]
             wanted[unsafe]=tree.node_level[unsafe]
-            leaves=self.pin_boundaries(tree,tree.balanced_leaves(wanted),self.survey_leaves)
+            leaves=self.pin_boundaries(tree,tree.balanced_leaves(wanted),self.survey_leaves,
+                refine_open_boundaries=self.open_boundary_refinement)
         raise ValueError('Wet/dry coarsening guard did not converge')
 
     def adapt(self,requested,factory,*,cancelled=lambda:False,reject_after_candidate=False):
@@ -155,11 +161,16 @@ class RiverLeafController:
         if cancelled():raise InterruptedError('Adaptation cancelled')
         leaves,mesh,m,retained=self.plan(requested)
         event=dict(scope=SCOPE,from_cells=len(self.leaves),to_cells=len(leaves),time_s=a.time,
-            accepted_updates=a.steps,retained_wetdry_groups=retained,open_boundaries_finest=True,
+            accepted_updates=a.steps,retained_wetdry_groups=retained,
+            refine_open_boundaries=self.open_boundary_refinement,
+            open_boundaries_finest=all(mesh.cells[f.owner].level==self.hierarchy.finest_level
+                for f in mesh.faces if f.neighbour<0 and f.kind in ('inlet','outlet')),
             changed=leaves!=self.leaves,leaves=list(leaves),wrapper_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
         if self.survey_leaves:event['finest_survey_corridor_leaves']=list(self.survey_leaves)
         if leaves==self.leaves:return event
         b=factory(leaves,mesh)
+        if getattr(b,'_open_boundary_refinement',True)!=self.open_boundary_refinement:
+            raise ValueError('Fresh owner changed inlet/outlet refinement policy')
         if tuple(getattr(b,'_survey_required_leaves',()))!=self.survey_leaves:
             raise ValueError('Fresh owner changed surveyed corridor refinement')
         b,receipt=transfer(a,b,m,cancelled=cancelled,reject_after_candidate=reject_after_candidate,
@@ -174,6 +185,7 @@ class RiverLeafController:
         a=self.owner
         payload=a.checkpoint_bytes()
         meta=dict(scope=SCOPE,geometry_sha256=self.geometry_sha256,leaves=list(self.leaves),
+            refine_open_boundaries=self.open_boundary_refinement,
             wrapper_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             transfer_sha256=hashlib.sha256(Path(__file__).with_name('river_amr_transfer.py').read_bytes()).hexdigest(),
             bank_transfer_sha256=hashlib.sha256(Path(__file__).with_name('river_bank_remap.py').read_bytes()).hexdigest(),
@@ -197,6 +209,7 @@ class RiverLeafController:
             if meta.get(key)!=hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest():raise ValueError('Dynamic restart code identity differs')
         if meta['scope']!=SCOPE or meta['payload_sha256']!=hashlib.sha256(payload).hexdigest():raise ValueError('Dynamic restart payload identity differs')
         leaves=tuple(meta['leaves']);c=cls.from_factory(hierarchy,leaves,factory);a=c.owner
+        if meta['refine_open_boundaries']!=c.open_boundary_refinement:raise ValueError('Dynamic restart inlet/outlet refinement differs')
         if meta['geometry_sha256']!=c.geometry_sha256:raise ValueError('Dynamic restart geometry differs')
         def base(d):return canonical({k:v for k,v in d.items() if k not in DYNAMIC_KEYS})
         if base(a.identity)!=base(meta['identity']):raise ValueError('Dynamic restart base identity differs')

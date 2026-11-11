@@ -4,6 +4,7 @@ The common adaptive numerical owner is an internal library, not an alternative
 product format. Public operations always require this project's full identity.
 """
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -27,8 +28,7 @@ PREPARED_FILES = ("PROJECT.json", "core/prepared/PREPARED.json",
                   "core/TERRAIN.json", "core/RECIPE.json", "BANK_SURVEY.json", "NORMAL_SLOPES.json", "TURBINES.json")
 
 
-def source_identity():
-    """Bind the public contract and maintained source tree, not an old release."""
+def _source_hashes():
     paths = set()
     for folder in ("braids_core", "braids_gpu", "solver/wave", "solver/cut_cells"):
         for p in (ROOT/folder).rglob("*"):
@@ -36,10 +36,73 @@ def source_identity():
                 paths.add(p)
     # These implementations are still imported by the maintained owner.
     # Packaging must retain or relocate them, never omit them from provenance.
-    for folder in ("braids_support/sediment/river_morphodynamics", "braids_support/gpu_fwave"):
+    for folder in ("validation/sediment/river_morphodynamics", "validation/gpu_fwave"):
         paths.update(p for p in (ROOT/folder).glob("*") if p.suffix in (".py", ".h", ".cu") and p.is_file())
     paths.add(ROOT/"braids_qgis/core/raster_surface.py")
-    return identity({p.relative_to(ROOT).as_posix(): sha(p) for p in sorted(paths)})
+    return {p.relative_to(ROOT).as_posix(): sha(p) for p in sorted(paths)}
+
+
+def source_identity():
+    """Bind the public contract and maintained source tree, not an old release."""
+    return identity(_source_hashes())
+
+
+def _retry202_legacy_runtime_ids():
+    """Recognize only the exact predecessor tree for the clock migration.
+
+    All other source files must match; do not accept a generic older runtime.
+    """
+    hashes=_source_hashes()
+    performance='braids_core/sediment/runtime_performance.py'
+    if hashes.pop(performance,None) not in ('8532128f0b31b0edcd57551d8521b7c6527e2182afb3177a6baf38139e370263','d9dd5c3157351be1a491d952152de8d5f10377853d4f712c5dfcb35a165bbc01'):
+        return set()
+    required={              'braids_core/sediment/runtime_shallow_fusion.py':'c4e4c33d9d8c7f2e92145f5dd72a195d6ac6609dbbf165db93488bf7b4b40413',
+              'braids_core/sediment/runtime_topology_cache.py':'e7f5d494e80195aa43deff9ab5e78418fab3a105a1257f8ea5e700da51376e9a',
+              'braids_core/sediment/runtime_snapshot.py':'19cc72f3ac232c9b99d3cae79dbe40c74f77fcf7238bdf36ff82d88d5ac9c9bd'}
+    if any(hashes.pop(name,None)!=value for name,value in required.items()):return set()
+    field='braids_core/sediment/river_field_policy.py'
+    clock='braids_core/sediment/river_sediment_clock.py'
+    worker='braids_core/river_worker.py'
+    if hashes.get(clock)!='08a21cdb74e7a4eff4df2a6ccd61c3e7a28cadee8edfcf8475f8376e25b9dedb':return set()
+    variants=[
+        ('77c79f1992773374259a1b7cb66d8d6891041653e8b1a84da6a41d36044a7cfe',
+         '4c215303f82512d28e47d9d794d134cb00c699d58380c9e6a7286a76121dcf77',
+         '47d71225c04b297f53070a88fc4c9be54fb5ed57dc66600682418425cbd0c534'),
+        ('79e3275300151160ca58d2174f33f65f638f938858fb1d39f2a50c387537d962',
+         'bde8d175361ba1ad00edb33a6728c1d200d24aa38a210ef5c7ee80a25b69893e',
+         'fa356e9b4a4a7f6bc7157c19febd69f0c715c0839ba951d65570e69b2ffdbc6c')]
+    old_clock='78c8d04c9e0e19e49826e74bbdd1af4628b0b81f0d71e98464ef3396c6b969ab'
+    result={identity(dict(hashes,**{field:old_field,clock:old_clock,worker:old_worker}))
+            for current_field,old_field,old_worker in variants if hashes.get(field)==current_field}
+    worker202={
+        '77c79f1992773374259a1b7cb66d8d6891041653e8b1a84da6a41d36044a7cfe':'53f6d306bded21b7e17c031b234da218a7c5be0daaab1f976a82c9e181db378b',
+        '79e3275300151160ca58d2174f33f65f638f938858fb1d39f2a50c387537d962':'de47b4c3aab220da838a5174dbef49951b94f712dd6f51f1f7d318068dd1743b'}
+    if hashes.get(field) in worker202:
+        result.add(identity(dict(hashes,**{worker:worker202[hashes[field]]})))
+    worker204={
+        '77c79f1992773374259a1b7cb66d8d6891041653e8b1a84da6a41d36044a7cfe':'820c80bfa11c0c0667a641c7ce38e75ab8ff608be08edbbd11ff04acf6f1d0ac',
+        '79e3275300151160ca58d2174f33f65f638f938858fb1d39f2a50c387537d962':'ffcd8270d5aec854773b7c3ad5b536a5a5e23809e6fde8ded03545078689280d'}
+    if hashes.get(field) in worker204:
+        result.add(identity(dict(hashes,**{worker:worker204[hashes[field]],performance:'9122e6fcb024697f28b9d507e9034d169b7166ba573fbc365ae5168de054e4ab'})))
+    worker205={
+        '77c79f1992773374259a1b7cb66d8d6891041653e8b1a84da6a41d36044a7cfe':'49680d75f222b3d1e755c12169efb7c58c05e4407af07f5bd7ab6aec6321d577',
+        '79e3275300151160ca58d2174f33f65f638f938858fb1d39f2a50c387537d962':'a571945878cf82c55b05a02067e4955461bcbe49e8ac6b2e3e6770d35b60a53c'}
+    if hashes.get(field) in worker205:
+        result.add(identity(dict(hashes,**{worker:worker205[hashes[field]],performance:'2103545cd4c91f08ed1ab8dca6a48dba962d9d5198c8f40b723a8ae1013aafdd'})))
+    worker206={
+        '77c79f1992773374259a1b7cb66d8d6891041653e8b1a84da6a41d36044a7cfe':'760832a0c929084a5fa979676d4c3368abd8ab44dfedb2f2cd437f350f51cf88',
+        '79e3275300151160ca58d2174f33f65f638f938858fb1d39f2a50c387537d962':'0d3252213520447b746ede54027b18d7800dfa7b152d514cd7d1c673789b11c8'}
+    if hashes.get(field) in worker206:
+        result.add(identity(dict(hashes,**{worker:worker206[hashes[field]],performance:'85b3a5bbdf3fa90ebc2bca107a6b5f486fa84c24d0c2a5212e5b84576a4e6663',
+            'braids_core/sediment/runtime_snapshot.py':'19cc72f3ac232c9b99d3cae79dbe40c74f77fcf7238bdf36ff82d88d5ac9c9bd'})))
+    worker207={
+        '77c79f1992773374259a1b7cb66d8d6891041653e8b1a84da6a41d36044a7cfe':'5e26322d8c903e52ccb71defc67e80d08da6975edf34167c222e3734b56b88cf',
+        '79e3275300151160ca58d2174f33f65f638f938858fb1d39f2a50c387537d962':'dda5f67bff9c2914b60247f15a486ecc22122c7736758686f8a46fdbf6bb25f2'}
+    if hashes.get(field) in worker207:
+        result.add(identity(dict(hashes,**{worker:worker207[hashes[field]],performance:'19976d9c63b1d54bb898cda78502038da975c0f53a1864e598b27267af2ef902',
+            'braids_core/sediment/runtime_snapshot.py':'19cc72f3ac232c9b99d3cae79dbe40c74f77fcf7238bdf36ff82d88d5ac9c9bd',
+            'braids_core/sediment/runtime_topology_cache.py':'e7f5d494e80195aa43deff9ab5e78418fab3a105a1257f8ea5e700da51376e9a'})))
+    return result
 
 
 def prepare(project_path, output, *, stop_file=None):
@@ -124,9 +187,9 @@ def load_prepared(path):
     if not isinstance(receipt, dict) or receipt.get("schema") != PREPARED_SCHEMA or set(receipt) != keys:
         fail("prepared.schema", "Old prepared runs are not supported; prepare a new river project",
              "unsupported_format")
-    if not isinstance(receipt["files"], dict) or set(receipt["files"]) != set(PREPARED_FILES):
+    if not isinstance(receipt["files"], dict) or set(receipt["files"]) not in (set(PREPARED_FILES), set(PREPARED_FILES) | {"TOPOLOGY.json"}):
         fail("prepared.files", "Prepared file inventory differs", "identity_mismatch")
-    if receipt["runtime_id"] != source_identity():
+    if receipt["runtime_id"] != source_identity() and receipt["runtime_id"] not in _retry202_legacy_runtime_ids():
         fail("prepared.runtime_id", "Runtime changed; prepare again explicitly", "identity_mismatch")
     for name, digest in receipt["files"].items():
         path = root/name
@@ -162,6 +225,16 @@ def checkpoint_identity(project, receipt):
                 backend=project["model"]["request"]["execution"]["backend"])
 
 
+def checkpoint_identities(project, receipt):
+    expected=checkpoint_identity(project,receipt)
+    legacy=_retry202_legacy_runtime_ids()
+    if receipt['runtime_id'] in legacy:
+        current=source_identity()
+        prior=sorted(legacy-{receipt['runtime_id'],current})
+        return (expected,*(dict(expected,runtime_id=value) for value in prior),dict(expected,runtime_id=current))
+    return (expected,)
+
+
 def publish_checkpoint(source, target, expected,*,state,initialization=b''):
     payload = filesystem_path(source).read_bytes()
     metadata = dict(expected, payload_sha256=hashlib.sha256(payload).hexdigest(),
@@ -186,9 +259,15 @@ def read_checkpoint_bundle(path,expected):
     metadata=read_json(str(saved['identity']));payload=saved['payload'].tobytes();state=saved['state'].tobytes();initialization=saved['initialization'].tobytes()
     if not isinstance(metadata, dict) or metadata.get("schema") != CHECKPOINT_SCHEMA:
         fail("checkpoint.schema", "Current river checkpoint format required", "unsupported_format")
-    if metadata != dict(expected,payload_sha256=sha_bytes(payload),state_sha256=sha_bytes(state),initialization_sha256=sha_bytes(initialization)):
-        fail("checkpoint", "Checkpoint project, physics, backend, runtime or payload differs",
-             "identity_mismatch")
+    checksums=dict(payload_sha256=sha_bytes(payload),state_sha256=sha_bytes(state),initialization_sha256=sha_bytes(initialization))
+    if metadata != dict(expected,**checksums):
+        legacy=_retry202_legacy_runtime_ids()
+        compatible=(expected['runtime_id'] in legacy and
+                    any(metadata==dict(expected,runtime_id=value,**checksums)
+                        for value in legacy|{source_identity()}))
+        if not compatible:
+            fail("checkpoint", "Checkpoint project, physics, backend, runtime or payload differs",
+                 "identity_mismatch")
     decode(state)
     return dict(payload=payload,state=state,initialization=initialization)
 
@@ -211,7 +290,8 @@ def run(prepared, output, *, restart=None, until=None, stop_file=None, on_frame=
     project, receipt = load_prepared(prepared)
     if project.get('power_plan') and (restart is not None or initial_state is not None or continuation_project is not None):
         raise ValueError('Power planning requires a fresh turbine-free reference run. Imported/restarted fields are not yet certified as undisturbed; select a fresh run.')
-    expected = checkpoint_identity(project, receipt)
+    identities = checkpoint_identities(project, receipt)
+    expected,save_identity=identities[0],identities[-1]
     from .river_normal_slope import resolved_hydraulics
     normal_slopes=read_json((filesystem_path(prepared)/'NORMAL_SLOPES.json').read_text(encoding='utf-8'))
     hydraulics=resolved_hydraulics(project['settings']['hydraulics'],normal_slopes)
@@ -275,7 +355,7 @@ def run(prepared, output, *, restart=None, until=None, stop_file=None, on_frame=
                        initial_concentration_kg_m3=project["initial"]["concentration_kg_m3"]),
                    dependent_layer_parameters=project["dependent_layer_parameters"],
                    turbines=project['turbines'],crs=project["settings"]["domain"]["spatial_reference"],
-                   runtime_id=receipt["runtime_id"])
+                   runtime_id=save_identity['runtime_id'],prepared_runtime_id=receipt["runtime_id"])
     if initialized is not None:context['state_initialization']=initialized[0]
     def created():
         # A result keeps the exact resolved parameters used for that run,
@@ -296,11 +376,11 @@ def run(prepared, output, *, restart=None, until=None, stop_file=None, on_frame=
         from .river_state_snapshot import capture
         from .river_jiang_cao import active
         state=capture(project,mesh,owner,jiang_cao=active(project['model']))
-        publish_checkpoint(path, output/"checkpoint.npz", expected,state=state,initialization=initializer)
+        publish_checkpoint(path, output/"checkpoint.npz", save_identity,state=state,initialization=initializer)
         if checkpoint_dir is not None:
             folder=filesystem_path(checkpoint_dir);folder.mkdir(parents=True,exist_ok=True)
             target=folder/f"t_{row['time_s']:.12g}_step_{row['steps']:08d}.npz"
-            publish_checkpoint(path,target,expected,state=state,initialization=initializer)
+            publish_checkpoint(path,target,save_identity,state=state,initialization=initializer)
             write_json_atomic(target.with_suffix('.json'),dict(schema='braids.checkpoint-location.v1',
                 prepared=os.path.relpath(filesystem_path(prepared).resolve(),folder.resolve()),
                 run=os.path.relpath(output.resolve(),folder.resolve()),sha256=sha(target),**row))
@@ -343,7 +423,19 @@ def run(prepared, output, *, restart=None, until=None, stop_file=None, on_frame=
                                                     de_leeuw=project.get('de_leeuw_parameters'),
                                                     supplied_suspension=project.get('supplied_suspension_parameters'),
                                                     classic_suspension=project.get('classic_suspension_parameters'),
-                                                    dependent_layers=project["dependent_layer_parameters"]))
+                                                    dependent_layers=project["dependent_layer_parameters"],
+                                                    output_fields=project['settings'].get('output_fields')))
+
+
+_ordinary_run = run
+
+
+@functools.wraps(_ordinary_run)
+def run(*args, **kwargs):
+    from .sediment.runtime_performance import optimized_river_run
+    prepared=args[0] if args else kwargs.get('prepared')
+    with optimized_river_run(prepared=prepared,restart=kwargs.get('restart')):
+        return _ordinary_run(*args, **kwargs)
 
 
 def main():

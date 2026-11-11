@@ -7,6 +7,8 @@ This is a curve-driven actuator model, not a blade-geometry/BEM prediction.
 import math
 import numpy as np
 
+EPS=np.finfo(float).eps
+
 
 def validate(control):
     fields={'mode','model_name','rotational_speed_rpm','performance','outside_curve'}
@@ -50,9 +52,13 @@ def operating_point(control,diameter,depth,local_normal_velocity):
     K=math.pi*diameter/(4*depth);k=(rpm*math.pi/30)*(diameter/2)/u;roots=[]
     rows=control['performance']
     for left,right in zip(rows,rows[1:]):
-        lo=left['tip_speed_ratio'];hi=right['tip_speed_ratio'];m=(right['thrust_coefficient']-left['thrust_coefficient'])/(hi-lo);b=left['thrust_coefficient']-m*lo
+        lo=left['tip_speed_ratio'];hi=right['tip_speed_ratio']
+        # The original admissibility check requires alpha in [.5,1].
+        # Retain its tolerance envelope while avoiding roots of other pieces.
+        if hi<k*(.5-1e-12)-1e-10 or lo>k*(1+1e-12)+1e-10:continue
+        m=(right['thrust_coefficient']-left['thrust_coefficient'])/(hi-lo);b=left['thrust_coefficient']-m*lo
         B=K*m*k-4;C=K*b;disc=B*B-16*C
-        if disc < -64*np.finfo(float).eps*max(1.,B*B,abs(16*C)):continue
+        if disc < -64*EPS*max(1.,B*B,abs(16*C)):continue
         q=-.5*(B+math.copysign(math.sqrt(max(0.,disc)),B))
         for x in ([q/4,C/q] if q else [0.]):
             tsr=k*x

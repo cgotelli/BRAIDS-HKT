@@ -11,6 +11,8 @@ HYDRAULICS={
     'inlet.critical_discharge':('Discharge; critical-depth reference','inlet',('discharge_m3_s',),('discharge_m3_s',)),
     'inlet.normal_discharge':('Discharge; normal-depth reference (automatic mesh slope)','inlet',('discharge_m3_s','energy_slope'),('discharge_m3_s',)),
     'outlet.stage':('Water-surface elevation','outlet',('stage_m',),('stage_m',)),
+    'outlet.normal_depth':('Normal depth (manual mean bed slope)','outlet',('bed_slope',),()),
+    'outlet.rating_curve':('Q–H rating curve','outlet',('rating_curve',),()),
     'outlet.critical':('Free outflow (critical control / supercritical export)','outlet',(),()),
     'outlet.supercritical':('Supercritical extrapolation','outlet',(),()),
     'outlet.free_weir':('Free undrowned weir (structure; no reverse flow)','outlet',('crest_m','coefficient_m_half_s','effective_width_m'),()),
@@ -36,6 +38,8 @@ PARAMETERS={
     'depth_m':('Depth above fixed datum (m)','0.1'),
     'datum_m':('Fixed depth datum (m, DEM datum)','0'),
     'energy_slope':('Normal-flow slope source','mesh'),
+    'bed_slope':('Mean downstream bed slope (m/m)','0.001'),
+    'rating_curve':('Discharge–elevation rating curve','[["", ""], ["", ""]]'),
     'crest_m':('Weir crest (m, DEM datum)','0'),
     'coefficient_m_half_s':('Weir coefficient C (m½/s; includes gravity factors)','1.7'),
     'effective_width_m':('Effective weir width (m)','1'),
@@ -48,7 +52,7 @@ COMPOSITION_METHODS={'composition.free':'Free column from adjacent cell','compos
     'composition.mass_fraction':'Prescribed mass fractions','composition.reference_volume_fraction':'Prescribed reference-volume fractions'}
 STAGE_POLICIES={'stage.outflow_only':'Outflow only; close inward portions',
     'stage.subcritical_backflow':'Permit subcritical backflow; zero incoming tangent'}
-INITIALS={'initial.prepared_bed':'Prepared adjacent bed','initial.elevation':'Specified exterior elevation'}
+INITIALS={'initial.prepared_bed':'Prepared bed at the physical boundary face','initial.elevation':'Specified exterior elevation'}
 APPLICABILITY={
     'inlet.total_discharge':'Requires a wet section for nonzero discharge; use a prescribed stage/depth inlet for dry-start inundation.',
     'inlet.stage_discharge':'Net inward discharge has priority and is imposed exactly. Elevation defines a common exterior reference water line, not a simultaneous strong stage condition. Boundary Riemann solutions admit shocks, rarefactions and backwater; actual face elevations may differ from the reference and from each other. Dry subcritical-reference admission is sonic. Local outward portions remain visible in the signed flux budget; the total remains the specified inward discharge. Incoming tangent is zero.',
@@ -56,6 +60,8 @@ APPLICABILITY={
     'inlet.critical_discharge':'The exterior reference section is critical on actual exterior geometry (section Froude number 1, not every local face). Net inward discharge is exact. Boundary Riemann solutions handle shocks, rarefactions and backwater; actual face water lines need not equal the common reference or remain critical. Dry subcritical-reference admission is sonic locally, not necessarily section-critical on an uneven bed. Signed local backflow is retained in the exact net section discharge.',
     'inlet.normal_discharge':'Normal-depth reference uses selected resistance and signed inward bed fall fitted automatically on the prepared finest mesh. This bed slope is an energy-slope proxy under the uniform-flow assumption, frozen across AMR/restart; flat/adverse slope is rejected. The fit is saved in NORMAL_SLOPES.json. Net inward discharge is exact. Boundary Riemann solutions retain a compatible uniform normal flow but admit shocks and backwater instead of forcing normal depth. Actual face water lines can differ from the common reference; dry subcritical-reference admission is sonic. Signed local backflow remains visible.',
     'outlet.stage':'Outflow-only closes inward faces. Optional backflow is subcritical with zero incoming tangent; wet-stage inundation over a dry exterior trace is rejected.',
+    'outlet.normal_depth':'Uses the entered positive mean bed slope as an energy-slope approximation for normal flow and the selected hydraulic roughness. Disconnected physical openings are computed separately. This is a uniform-flow assumption, not a measured downstream water level.',
+    'outlet.rating_curve':'Enter section discharge (m³/s) and water-surface elevation (m, DEM datum). Values must increase strictly in both columns. The curve represents the whole named outlet and is linearly interpolated without extrapolation. Outflow only.',
     'outlet.critical':'Outgoing-characteristic critical section; local inward flow closes and outward supercritical flow bypasses the critical target.',
     'outlet.supercritical':'Wet outward supercritical flow only. Wet subcritical or reverse flow is rejected; dry faces remain closed.',
     'outlet.free_weir':'Free undrowned weir Q=C W H^1.5, solved on the subcritical control branch with shock/rarefaction compatibility. Local recirculation closes without importing water. A crest that cannot control the flow is rejected; no submerged-weir substitution.',
@@ -71,6 +77,17 @@ def finite(value,label):
     return float(value)
 
 
+def rating_curve(value):
+    if not isinstance(value,list) or len(value)<2:raise ValueError('Q–H curve requires at least two discharge/elevation rows')
+    rows=[]
+    for row in value:
+        if not isinstance(row,list) or len(row)!=2:raise ValueError('Each Q–H row requires discharge and water elevation')
+        rows.append([finite(row[0],'rating discharge'),finite(row[1],'rating elevation')])
+    if any(r[0]<0 for r in rows) or any(b[0]<=a[0] or b[1]<=a[1] for a,b in zip(rows,rows[1:])):
+        raise ValueError('Q–H discharge must be nonnegative and both discharge and elevation must increase strictly')
+    return rows
+
+
 def hydraulic_controls(data,controls):
     """Shared method validation; None is only the private component-test default."""
     nb=len(data['mode'])
@@ -84,12 +101,12 @@ def hydraulic_controls(data,controls):
         method=row.get('method') if isinstance(row,dict) else None
         if method not in HYDRAULICS:raise ValueError('Unsupported hydraulic method')
         exact(row,('method',*HYDRAULICS[method][2]),'Hydraulic control')
-        values={k:('mesh' if k=='energy_slope' and row[k]=='mesh' else finite(row[k],k)) for k in HYDRAULICS[method][2]}
+        values={k:(rating_curve(row[k]) if k=='rating_curve' else 'mesh' if k=='energy_slope' and row[k]=='mesh' else finite(row[k],k)) for k in HYDRAULICS[method][2]}
         if any(values.get(k,0)<0 for k in ('discharge_m3_s','depth_m')):raise ValueError('Discharge and prescribed depth must be nonnegative')
-        for k in ('energy_slope','coefficient_m_half_s','effective_width_m'):
+        for k in ('energy_slope','bed_slope','coefficient_m_half_s','effective_width_m'):
             if k in values and values[k]!='mesh' and values[k]<=0:raise ValueError(k+': positive value required')
         mode[b]={'inlet.total_discharge':6,'outlet.stage':2,'outlet.supercritical':3,
-                 'outlet.critical':4,'outlet.free_weir':5}.get(method,9)
+                 'outlet.critical':4,'outlet.free_weir':5,'outlet.normal_depth':10,'outlet.rating_curve':11}.get(method,9)
         forcing[0,b]=values.get('discharge_m3_s',0.)
         forcing[1,b]=values.get('stage_m',values.get('datum_m',0.)+values.get('depth_m',0.))
         if not np.isfinite(forcing[:,b]).all():raise ValueError('Resolved hydraulic control is not finite')
@@ -198,7 +215,13 @@ def install(a,definition,folder):
             incoming[outside&(d['bid']==b)]=finite(states[name]['secondary_intensity_m_s'],name+' incoming secondary intensity')
         clock.boundary_values[:]=p.xp.asarray(incoming)
         clock.identity['open_boundary']['incoming_intensity_by_boundary_m_s']={name:states[name]['secondary_intensity_m_s'] for name in names}
-    z=np.where(outside,host(a.z)[d['owner']],0.);values=np.zeros(p.nf)
+    from .sediment import river_open_bed_trace
+    z=river_open_bed_trace.prepared_face_bed(p,host(a.z));values=np.zeros(p.nf)
+    identity['prepared_bed_initialization']=dict(method='bounded_one_sided_prepared_plane_at_physical_face_v1',
+        source_sha256=digest(river_open_bed_trace.__file__),
+        geometry='actual cell centroids and physical open-face midpoints; distinct-neighbour weighted LS',
+        bounds='one observed neighbour elevation span; isolated cells retain the prepared value',
+        overrides='explicit initial.elevation is unchanged')
     for b,name in enumerate(names):
         row=states[name]['bed'];f=outside&(d['bid']==b)
         if row['initial']['method']=='initial.elevation':z[f]=row['initial']['elevation_m']
@@ -208,6 +231,9 @@ def install(a,definition,folder):
         stage_policies={b:states[name]['stage_policy'] for b,name in enumerate(names) if hydraulics[name]['method']=='outlet.stage'},
         hydraulic_schedules={b:states[name]['hydraulic_schedule'] for b,name in enumerate(names)},
         bed_schedules={b:states[name]['bed_schedule'] for b,name in enumerate(names)})
+    from .sediment.river_explicit import RiverExplicit
+    if isinstance(getattr(owner,'midpoint',None),RiverExplicit) and owner.midpoint.explicit_boundary_budget is None:
+        owner.midpoint.bind_boundary_budget(ext)
     if a.morphology:
         mass=host(a.columns.mass)[:,:,o];sv=host(a.columns.sv)[:,o]
         fractions=np.full((mass.shape[1],len(faces)),1./mass.shape[1])
@@ -220,4 +246,6 @@ def install(a,definition,folder):
     for key in ('exterior_bed','exterior_sediment'):
         if key in owner.identity:
             owner.identity[key].update(public_support=True,admission='strict named river-project boundary definition')
+    from .sediment.river_open_bed_trace import install as install_bed_trace
+    install_bed_trace(a)
     owner.identity['public_boundaries']=identity

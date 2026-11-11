@@ -53,12 +53,12 @@ class MobileEngine:
 
 class Flow2DHMobileBed(Flow2DHFixedBed):
     def __init__(self,data,*,backend,chezy,diameter,bedbc,feed,morfac=1.,betac=1.,
-                 viscosity=0.,diffusivity=0.,threads=4,allow_nonflat=False):
+                 viscosity=0.,diffusivity=0.,espir=1.,threads=4,allow_nonflat=False):
         if not np.isfinite([diameter,morfac,diffusivity]).all() or min(diameter,morfac)<=0 or diffusivity<0:
             raise ValueError('Invalid mobile-bed controls')
         p=Parameters(manning=float(data['manning_cell'][0]),diameter=diameter,ripple_factor=0.,wall_sand_roughness=0.)
         super().__init__(data,backend=backend,chezy=chezy,betac=betac,viscosity=viscosity,
-            diffusivity=0.,threads=threads,parameters=p,allow_nonflat=allow_nonflat)
+            diffusivity=0.,espir=espir,threads=threads,parameters=p,allow_nonflat=allow_nonflat)
         self.diff=float(diffusivity);self.morfac=float(morfac)
         bc=np.asarray(bedbc,dtype=np.int32);f=np.asarray(feed,dtype=float)
         outside=(self.mesh['neighbour']<0)&(self.mesh['bid']>=0)

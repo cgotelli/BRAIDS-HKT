@@ -109,13 +109,17 @@ def prepare(prepared,source_path,target_path,*,allow_mapping=False):
     columns_ok=(s is not None and t is not None and bed_declaration_same
                 and s['fraction_basis']==t['fraction_basis'] and 'mass' in source and source['mass'].shape[:2]==(len(th),ng))
     if columns_ok:
-        rho=np.asarray(project['settings']['columns']['solid_density_kg_m3'])
+        from .sediment.bed_columns_v101 import ColumnMethodsV101
+        # sv belongs to the column-reference volume, not always true solid
+        # volume. Fixed porosity already lives in the dry bulk density.
+        rho=np.asarray(ColumnMethodsV101(**project['settings']['columns']).density)
         mass=transform(source['mass']);source_bulk=(source['mass']/rho[None,:,None]).sum(1)/source['sv']
-        thick=transform(source_bulk);solid=(mass/rho[None,:,None]).sum(1)
-        sv=np.divide(solid,thick,out=transform(source['sv']),where=thick>0)
+        thick=transform(source_bulk);reference=(mass/rho[None,:,None]).sum(1)
+        sv=np.divide(reference,thick,out=transform(source['sv']),where=thick>0)
         fraction_volume=mass/rho[None,:,None]
-        fractions=np.divide(fraction_volume,solid[:,None,:],out=np.full_like(mass,1./ng),where=solid[:,None,:]>0)
-        fields.update(mass=mass,sv=sv,rock=z-thick.sum(0),thickness=thick,fractions=fractions)
+        fractions=np.divide(fraction_volume,reference[:,None,:],out=np.full_like(mass,1./ng),where=reference[:,None,:]>0)
+        rock=(transform(source['rock']) if mapping is None and 'rock' in source else z-thick.sum(0))
+        fields.update(mass=mass,sv=sv,rock=rock,thickness=thick,fractions=fractions)
         loaded.append('compatible bed layers and class stocks')
         used.update(('mass','sv','rock'))
     else:initialized.append('bed-layer thickness/composition from target settings; rock shifted to retain the saved bed')

@@ -4,6 +4,7 @@ No turbine-specific data, wake constants or spacing corrections live here.
 Uniform and nonuniform inflow use the same mechanical power convention.
 """
 import math
+from bisect import bisect_left
 import numpy as np
 
 MODE='fixed_rpm_surface'
@@ -68,15 +69,15 @@ def validate(control):
     return dict(control,model_name=c['model_name'],rotational_speed_rpm=c['rotational_speed_rpm'],performance=clean,wake=dict(wake))
 
 def _line(curve,tsr,field):
-    x=np.array([r['tip_speed_ratio'] for r in curve]);y=np.array([r[field] for r in curve])
+    x=[r['tip_speed_ratio'] for r in curve]
     if tsr<x[0]-1e-11 or tsr>x[-1]+1e-11:raise ValueError('TSR outside supplied surface; extend the device data.')
-    i=min(len(x)-2,max(0,int(np.searchsorted(x,tsr))-1));m=(y[i+1]-y[i])/(x[i+1]-x[i])
-    return m,y[i]-m*x[i]
+    i=min(len(x)-2,max(0,bisect_left(x,tsr)-1));yl=curve[i][field];yh=curve[i+1][field];m=(yh-yl)/(x[i+1]-x[i])
+    return m,yl-m*x[i]
 
 def _abc(control,v,K,field):
-    tables=control['performance'];speeds=np.array([t['inflow_m_s'] for t in tables])
+    tables=control['performance'];speeds=[t['inflow_m_s'] for t in tables]
     if not speeds[0]-1e-11<=v<=speeds[-1]+1e-11:raise ValueError('Incoming rotor speed outside supplied performance surface; extend the device data.')
-    i=min(len(speeds)-2,max(0,int(np.searchsorted(speeds,v))-1));lo,hi=tables[i:i+2]
+    i=min(len(speeds)-2,max(0,bisect_left(speeds,v)-1));lo,hi=tables[i:i+2]
     ml,bl=_line(lo['curve'],K/v,field);mh,bh=_line(hi['curve'],K/v,field)
     ds=speeds[i+1]-speeds[i];a=(bh-bl)/ds;b=bl+(mh-ml)*K/ds-speeds[i]*a;c=K*(ml-speeds[i]*(mh-ml)/ds)
     return a,b,c
@@ -131,9 +132,15 @@ def resolve_moments(control,diameter,depth,local,mu,var,central3,min_offset):
     return roots[0]
 
 def resolve(control,diameter,depth,local,offsets,weights,xp=np):
-    if bool(xp.any(~xp.isfinite(offsets))) or bool(xp.any(weights<0)) or abs(float(xp.sum(weights))-1)>1e-10:raise ValueError('Finite offsets and normalized nonnegative disk weights required.')
-    mu=float(xp.sum(weights*offsets));centered=offsets-mu
-    return resolve_moments(control,diameter,depth,local,mu,float(xp.sum(weights*centered**2)),float(xp.sum(weights*centered**3)),float(xp.min(offsets)))
+    if xp is np:
+        if bool(xp.any(~xp.isfinite(offsets))) or bool(xp.any(weights<0)) or abs(float(xp.sum(weights))-1)>1e-10:raise ValueError('Finite offsets and normalized nonnegative disk weights required.')
+        mu=float(xp.sum(weights*offsets));centered=offsets-mu
+        var=float(xp.sum(weights*centered**2));third=float(xp.sum(weights*centered**3));low=float(xp.min(offsets))
+    else:
+        bad,negative,total,mu,low=xp.stack((xp.any(~xp.isfinite(offsets)),xp.any(weights<0),xp.sum(weights),xp.sum(weights*offsets),xp.min(offsets))).get().tolist()
+        if bad or negative or abs(total-1)>1e-10:raise ValueError('Finite offsets and normalized nonnegative disk weights required.')
+        centered=offsets-mu;var,third=xp.stack((xp.sum(weights*centered**2),xp.sum(weights*centered**3))).get().tolist()
+    return resolve_moments(control,diameter,depth,local,mu,var,third,low)
 
 def operating_point(control,diameter,depth,local):
     p=resolve_moments(control,diameter,depth,local,0.,0.,0.,0.)

@@ -80,9 +80,11 @@ class WrappedNote(QLabel):
         self._fit_text()
 
     def _fit_text(self):
-        # QFormLayout otherwise retains the previous narrower row height after
-        # resize, although its own heightForWidth reports the new smaller size.
-        self.setFixedHeight(max(0,self.heightForWidth(self.width())))
+        # QLabel.heightForWidth may return its previous fixed height after a
+        # hidden form is shown. Measure the text directly so it can shrink.
+        width=max(1,self.width()-2*self.margin())
+        bounds=self.fontMetrics().boundingRect(0,0,width,100000,int(Qt.TextWordWrap),self.text())
+        self.setFixedHeight(max(0,bounds.height()+2*self.margin()+4))
 
 
 def section(layout, title, *, expanded=False):
@@ -129,7 +131,7 @@ class RiverPhysicsEditor(QObject):
         self.transport_box, form = section(layout, "Transport", expanded=True)
         self.capacity = self._register("capacity", combo(
             [(name.removeprefix("capacity.").replace("_", " ").title(), name) for name in CAPACITIES]))
-        set_choice(self.capacity, "capacity.mpm")
+        set_choice(self.capacity, "capacity.mpm_braids_5_055")
         self.route = self._register("route", combo([
             ("Bedload channel only", "bedload"),
             ("Algebraic total load", "total_load")]))
@@ -456,7 +458,7 @@ class RiverPhysicsEditor(QObject):
             self.parameters[specification.keyword] = field
             self.parameter_form.addRow('MPM multiplier (standard = 1)' if method=='capacity.mpm' and specification.keyword=='ACal' else specification.keyword, field)
             if getattr(self,'simple_bedload',False) and method in CATALOG:
-                self.parameter_form.setRowVisible(field,specification.keyword=='ACal' or method in ('capacity.smart_jaggi','capacity.recking_2010','capacity.camenen_larson_2005','capacity.mpm_jc2026_p15_reconstruction_v1'))
+                self.parameter_form.setRowVisible(field,specification.keyword=='ACal' or method in ('capacity.wang_fredsoe','capacity.smart_jaggi','capacity.recking_2010','capacity.camenen_larson_2005','capacity.mpm_jc2026_p15_reconstruction_v1'))
                 if method=='capacity.mpm_jc2026_p15_reconstruction_v1':
                     self.parameter_form.labelForField(field).setText(dict(VicMol='Water kinematic viscosity (m²/s)',
                         ReposeAngle_deg='Repose angle (degrees)',ProtectInitialDryBank='Protect initial dry-bank patch (0 = off, 1 = on)')[specification.keyword])
@@ -474,6 +476,9 @@ class RiverPhysicsEditor(QObject):
                 if method=='capacity.camenen_larson_2005' and specification.keyword=='VicMol':
                     self.parameter_form.labelForField(field).setText('Water kinematic viscosity (m²/s)')
                     field.setToolTip('Positive molecular water viscosity, typically 1e-6 m²/s at 20 °C. NOT eddy viscosity. Used to calculate critical Shields from D50; not a freely fitted threshold.')
+                if method=='capacity.wang_fredsoe' and specification.keyword=='VicMol':
+                    self.parameter_form.labelForField(field).setText('Water kinematic viscosity (m²/s)')
+                    field.setToolTip('Positive water molecular kinematic viscosity, standard1e-6m²/s. Computes Dstar and FLOW Shields threshold. Not eddy viscosity; enter a measured/temperature-based value.')
         if hasattr(self,'capacity_note') and method in CATALOG:self.capacity_note.setText(CATALOG[method]['note'])
         if hasattr(self, 'grains') and not self._loading:
             self._preset_diameter()
@@ -751,7 +756,7 @@ class RiverPhysicsEditor(QObject):
         if getattr(self, 'simple_bedload', False) and self.suspension_on.isChecked():
             self.diameter_note.setText('The table is the union of active formula requirements. Ds is an independently '
                 'specified representative suspended diameter, not another transported class or a bed percentile. '
-                'No D50, D84, D90 or Dm is silently substituted for Ds. Check Resolved setup for execution support.')
+                'No D50, D84, D90 or Dm is silently substituted for Ds. Check Summary for execution support.')
         self.packing_note.setText(
             "Packing is already in dry density; both top update rules are equivalent."
             if porosity == "porosity.dry_bulk_density" else
@@ -862,7 +867,7 @@ class RiverPhysicsEditor(QObject):
                 for key,value in CATALOG[self.capacity.currentData()]['parameters'].items():
                     try:actual=float(self.parameters[key].text())
                     except ValueError:actual=None
-                    if key!='ACal' and self.capacity.currentData() not in ('capacity.smart_jaggi','capacity.recking_2010','capacity.camenen_larson_2005',JC_METHOD) and actual!=value:
+                    if key!='ACal' and self.capacity.currentData() not in ('capacity.wang_fredsoe','capacity.smart_jaggi','capacity.recking_2010','capacity.camenen_larson_2005',JC_METHOD) and actual!=value:
                         fail('capacity.parameters.'+key,f'The simple bedload setup requires {key}={value}. Restore this documented value in the project JSON or create a new project; it is not silently reset.')
         if bed and sus and self.route.currentData()=='total_load':
             fail('transport','Algebraic total load already includes suspended capacity. Choose Bedload channel only in 04 / Bedload to use independently transported suspension.')
@@ -882,8 +887,9 @@ class RiverPhysicsEditor(QObject):
         sus = self.suspended_formula.currentData() if on and self.suspension_on.isChecked() else None
         sizes = {}
         for key in required_diameters(bed, sus):
-            try:sizes[key] = float(self._diameter_values.get(key, '')) / 1000.
-            except ValueError:sizes[key] = None
+            raw=self._diameter_values.get(key, '')
+            try:sizes[key] = float(str(raw).strip()) / 1000.
+            except (TypeError,ValueError):sizes[key] = None
         return resolve_setup(bedload=bed, suspended=sus, diameters_m=sizes)
 
     def transport_setup_snapshot(self):
@@ -929,7 +935,14 @@ class RiverPhysicsEditor(QObject):
             except ValueError:valid=False
             if not valid:raise ModelError('invalid_input','sediment.capacity.parameters.'+key,
                 'Enter a finite coefficient for '+key+' in 04 / General / Transport.')
-            spec=next(p for p in FORMULA_CONTRACTS[self.capacity.currentData()].parameters if p.keyword==key)
+            spec=next((p for p in FORMULA_CONTRACTS[self.capacity.currentData()].parameters if p.keyword==key),None)
+            if spec is None:
+                # A stale editor draft must never surface as an opaque
+                # StopIteration.  The current formula editor normally cannot
+                # create this state, so this is a recoverable configuration
+                # diagnostic for old/corrupt project state.
+                raise ModelError('invalid_input','sediment.capacity.parameters.'+key,
+                    f'{self.capacity.currentText()} does not define parameter {key!r}. Re-select the formula, then enter only its displayed parameters.')
             if spec.value_kind=='integer' and value!=int(value):
                 raise ModelError('invalid_input','sediment.capacity.parameters.'+key,
                     'Enter an integer for '+key+' in 04 / General / Transport.')
@@ -940,8 +953,8 @@ class RiverPhysicsEditor(QObject):
             from braids_core.sediment.river_garcia_parker import ZERO_CAPACITY
             parameters=dict(ZERO_CAPACITY if independent_suspended else DESKTOP_PARAMETERS)
         for name in REQUIRED.get(method, ()):
-            try:value = float(self._diameter_values.get(name, ''))/1000.
-            except ValueError:
+            try:value = float(str(self._diameter_values.get(name, '')).strip())/1000.
+            except (TypeError,ValueError):
                 raise ModelError('invalid_input', 'sediment.capacity.grain_sizes_m.'+name,
                     'Enter measured '+LABELS[name]+' in mm in 04 / General / Grain sizes. No diameter is inferred.')
             sizes[name] = value

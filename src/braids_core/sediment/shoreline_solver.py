@@ -140,13 +140,14 @@ class ShorelinePhysics(Flow2DHCurrentBed):
 
     def safe(self,q,threshold=None):
         threshold=self.parameters.dry if threshold is None else threshold
-        wet=q[0]>threshold
-        result=q.copy();result[0]=self.xp.where(wet,q[0],.001001)
-        result[1:]=self.xp.where(wet,q[1:],0.)
-        return result,wet
+        from .secondary_vector_ops import safe
+        return safe(self.xp,q,threshold)
 
     def local(self,q,z,olddepth,hi):
-        safe,wet=self.safe(q)
+        return self.local_with_safe(z,olddepth,hi,*self.safe(q))
+
+    def local_with_safe(self,z,olddepth,hi,safe,wet):
+        """Consume a call-local prepared state, never a cross-stage cache."""
         out=super().local(safe,z,self.xp.maximum(olddepth,.001001),self.xp.where(wet,hi,0.))
         out[:,~wet]=0.
         return out
@@ -254,7 +255,7 @@ class ShorelineSolver:
         self.backend=backend;self.data=data;self.controls=controls
         self.physics=ShorelinePhysics(data,backend=backend,chezy=controls.chezy,diameter=controls.diameter,
             bedbc=bedbc,feed=feed,morfac=controls.morfac,betac=controls.betac,
-            viscosity=controls.viscosity,diffusivity=controls.diffusivity,threads=controls.threads)
+            viscosity=controls.viscosity,diffusivity=controls.diffusivity,espir=controls.espir,threads=controls.threads)
         self.xp=self.physics.xp;xp=self.xp
         self.q=xp.asarray(data['state'][:3]).copy();self.z=xp.asarray(data['bed']).copy()
         if backend=='cpu':
@@ -278,6 +279,7 @@ class ShorelineSolver:
             physics=self.physics.identity,hydraulics=hydroid,source_sha256=digest(__file__),
             input_sha256={p.name:digest(p) for p in sorted(filesystem_path(deck).parent.glob('case.data*'))},
             backend=backend,hydraulic_qualification='explicit_qualification125_and_resistance126',public_qgis_admission=False)
+        self.identity['water_increment_budget']='max(1e-10 m3,64*FP64_epsilon*max(inventory,absolute_boundary_exchange,1 m3))'
         from .river_explicit import install
         install(self,controls.cfl)
 
@@ -358,7 +360,8 @@ class ShorelineSolver:
                 raise BendTrialRejected(f'Shoreline water budget failed: residual={residual:.6e} m3, roundoff={roundoff:.6e} m3')
             p.finish(base,nextq,water,morphology=self.morphology);self.check()
             result=dict(q=nextq.copy(),z=p.ztrial.copy(),hI=p.Wtrial.copy(),
-                diagnostics=dict(p.last,water_residual_m3=residual,water_increment_roundoff_limit_m3=roundoff,**integration))
+                diagnostics=dict(p.last,water_residual_m3=residual,
+                    water_increment_roundoff_limit_m3=roundoff,**integration))
             if commit:
                 p.commit();self.q[...]=nextq;self.z[...]=result['z'];self.water_ledger+=ledger
                 self.time+=dt;self.steps+=1;self.last=result['diagnostics']

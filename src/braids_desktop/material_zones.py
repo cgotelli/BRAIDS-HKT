@@ -1,21 +1,29 @@
 """Small shared polygon-override editor for roughness and erodible depth."""
 from copy import deepcopy
 from PySide6.QtCore import Qt,Signal
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,QPushButton
+from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,QPushButton,QSizePolicy
 
 
 class MaterialZones(QWidget):
     changed=Signal()
     action=Signal(str)
     def __init__(self,kind,parent=None):
-        super().__init__(parent);self.kind=kind;layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0)
+        super().__init__(parent);self.kind=kind;self.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Maximum);layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0)
         self.label=QLabel();self.label.setWordWrap(True);layout.addWidget(self.label)
         self.table=QTableWidget(0,2);self.table.setHorizontalHeaderLabels(['Polygon','Value'])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);self.table.setMaximumHeight(150);layout.addWidget(self.table)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);self.table.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed);layout.addWidget(self.table)
         row=QHBoxLayout();layout.addLayout(row)
         for text,key in [('Add polygon','add'),('Edit shape','edit'),('Remove','remove')]:
             button=QPushButton(text);button.clicked.connect(lambda _,k=key:self.action.emit(k+'_zone:'+self.kind));row.addWidget(button)
+        layout.addStretch()
         self.table.itemChanged.connect(lambda *_:self.changed.emit())
+        self._fit_table()
+
+    def _fit_table(self):
+        header=self.table.horizontalHeader().sizeHint().height()
+        rows=sum(max(32,self.table.rowHeight(row)) for row in range(self.table.rowCount()))
+        self.table.setFixedHeight(header+rows+2*self.table.frameWidth()+4)
+        self.updateGeometry()
     def selected(self):
         row=self.table.currentRow()
         if row<0:raise ValueError('Select a material polygon first')
@@ -26,6 +34,7 @@ class MaterialZones(QWidget):
             name=QTableWidgetItem(row['id']);name.setFlags(name.flags()&~Qt.ItemIsEditable);name.setData(Qt.UserRole,deepcopy(row['points_xy']))
             self.table.setItem(i,0,name);self.table.setItem(i,1,QTableWidgetItem(str(row['value'])))
         self.table.blockSignals(False)
+        self._fit_table()
     def values(self):
         return [dict(id=self.table.item(i,0).text(),points_xy=deepcopy(self.table.item(i,0).data(Qt.UserRole)),
                      value=float(self.table.item(i,1).text().replace(',','.'))) for i in range(self.table.rowCount())]

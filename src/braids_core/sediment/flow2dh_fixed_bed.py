@@ -64,8 +64,8 @@ class FlowEngine:
 
 
 class Flow2DHFixedBed(BendPhysics):
-    def __init__(self,data,*,backend,chezy,betac=0.,viscosity=0.,diffusivity=0.,threads=4,parameters=None,allow_nonflat=False):
-        if not np.isfinite([chezy,betac,viscosity,diffusivity]).all() or chezy<1.e-6 or min(viscosity,diffusivity)<0:
+    def __init__(self,data,*,backend,chezy,betac=0.,viscosity=0.,diffusivity=0.,espir=1.,threads=4,parameters=None,allow_nonflat=False):
+        if not np.isfinite([chezy,betac,viscosity,diffusivity,espir]).all() or chezy<1.e-6 or min(viscosity,diffusivity,espir)<0:
             raise ValueError('Invalid classic FLOW fixed-bed coefficients')
         if not 0<=betac<=1:raise ValueError('FLOW Betac must be in [0,1]')
         if diffusivity!=0:raise ValueError('Nonzero scalar diffusion is not qualified on this fixed-bed route')
@@ -75,29 +75,40 @@ class Flow2DHFixedBed(BendPhysics):
             parameters=parameters or Parameters(manning=float(data['manning_cell'][0]),ripple_factor=0.,wall_sand_roughness=0.),
             scalar_diffusion=False)
         self.flow=FlowEngine(backend,threads);xp=self.xp;n=self.n
-        self.chezy=float(chezy);self.betac=float(betac);self.nu=float(viscosity);self.diff=float(diffusivity)
+        self.chezy=float(chezy);self.betac=float(betac);self.nu=float(viscosity);self.diff=float(diffusivity);self.espir=float(espir)
         self.dx=float(data['dx']);self.inputs=xp.zeros((12,n));self.outputs=xp.zeros((15,n))
         self.flags=xp.zeros((5,n),dtype=xp.int32);self.active=xp.ones(n,dtype=xp.uint8)
-        self.controls=xp.array([self.parameters.dry,2.5,20.,self.parameters.gravity,.41,1.,betac,np.finfo(float).eps])
+        self.controls=xp.array([self.parameters.dry,2.5,20.,self.parameters.gravity,.41,self.espir,betac,np.finfo(float).eps])
         self.hold=xp.zeros(n);self.scalarflux=xp.zeros(self.nf);self.scalarflux_integral=xp.zeros(self.nf)
         self.momentumflux=xp.zeros((2,self.nf));self.frozenstress=xp.zeros((2,n))
         self.source_increment=xp.zeros(n)
         self.gpu_result=None
         if backend=='gpu':
-            self.gpu_result=self.flow.operator.allocate_result(n)
+            from dataclasses import replace
+            raw=xp.zeros_like(self.outputs)
+            self.gpu_result=replace(self.flow.operator.allocate_result(n),
+                **{name:raw[k] for k,name in enumerate(self.flow.operator._OUTPUT_NAMES)})
+            # Separate raw operator diagnostics from masked/corrected physics outputs.
+            self._local_output_storage=(raw,)
             # Expose outputs to the solver's transaction inventory.
             for name in self.flow.operator._OUTPUT_NAMES:setattr(self,'local_'+name,getattr(self.gpu_result,name))
             for name in self.flow.operator._FLAG_NAMES:setattr(self,'local_'+name,getattr(self.gpu_result,name))
             self.local_status=self.gpu_result.status
         self.identity=dict(schema=3,method='classic_flow2dh_fixed_bed_v3',scope='fully_wet_fixed_flat_bed',
             backend=backend,runtime=self.flow.identity,wrapper_sha256=digest(__file__),chezy=self.chezy,
-            betac=self.betac,viscosity_m2_s=self.nu,diffusivity_m2_s=self.diff,curvature='clockwise_positive_velocity_LS',
+            betac=self.betac,espir=self.espir,viscosity_m2_s=self.nu,diffusivity_m2_s=self.diff,curvature='clockwise_positive_velocity_LS',
             source='existing_native_and_cuda_classic_FLOW_operator',state='signed_hI_m2_s',
             transport='limited_linear_Heun_shared_water_faces_then_old_depth_source_new_depth_BE_sink',
             stress='FLOW_manual_9.151-153_objective_Cartesian_tensor; vihsec_velocity_acceleration_times_accepted_start_depth',
             boundaries='adjacent equilibrium on incoming open faces; owner outgoing; zero wall flux',
             momentum_boundary='owner-extrapolated secondary stress following nonzero vihsec boundary stress; free-slip viscous flux',
             morphology=False,public_support=False)
+
+    @property
+    def local_output_block(self):
+        # The fifteen local_* rows already own transaction/checkpoint inventory.
+        # Do not register the same storage a second time as a direct array attr.
+        return self._local_output_storage[0]
 
     def local(self,q,z,olddepth,hi):
         e,g,n=self.engine,self.g,self.n
@@ -111,9 +122,9 @@ class Flow2DHFixedBed(BendPhysics):
         else:
             op=self.flow.operator
             result=op.evaluate(self.active,*list(self.inputs),dryflc=self.parameters.dry,rmincf=2.5,chzmin=20.,
-                gravity=self.parameters.gravity,von_karman=.41,espir=1.,betac=self.betac,
+                gravity=self.parameters.gravity,von_karman=.41,espir=self.espir,betac=self.betac,
                 epsilon_value=np.finfo(float).eps,out=self.gpu_result)
-            for k,name in enumerate(op._OUTPUT_NAMES):self.outputs[k]=getattr(result,name)
+            self.xp.copyto(self.outputs,self.local_output_block)
         return self.outputs
 
     def friction(self,q,dt,*args):

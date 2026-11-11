@@ -7,6 +7,7 @@ flow is signed; the UI offers its magnitude explicitly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import OrderedDict
 from io import BytesIO
 import csv
 import hashlib
@@ -28,6 +29,8 @@ VARIABLES = {
     'stage_m': ('Water surface', 'm', 'viridis'),
     'bed_m': ('Bed elevation', 'm', 'BrBG'),
     'bed_change_m': ('Bed change', 'm', 'RdBu_r'),
+    'initial_bed_m': ('Initial bed elevation', 'm', 'BrBG'),
+    'bedrock_m': ('Non-erodible base', 'm', 'BrBG'),
     'velocity_x_m_s': ('Eastward velocity', 'm/s', 'coolwarm'),
     'velocity_y_m_s': ('Northward velocity', 'm/s', 'coolwarm'),
     'unit_discharge_m2_s': ('Unit discharge magnitude', 'm²/s', 'Purples'),
@@ -36,6 +39,13 @@ VARIABLES = {
     'mobile_bedload_concentration': ('Mobile bedload solid fraction','m³/m³','YlOrBr'),
     'secondary_intensity_m_s': ('Secondary-flow intensity','m/s','coolwarm'),
     'bedload_capacity_m2_s': ('Equilibrium bedload capacity','m²/s solid','YlOrBr'),
+    'suspended_mass_kg_m2': ('Suspended mass','kg/m²','YlGn'),
+    'secondary_hI_m2_s': ('Secondary-flow state','m²/s','coolwarm'),
+    'dispersion_flux_m2_s': ('Dispersion-flux magnitude','m²/s','PuBuGn'),
+    'bank_erosion_kg_m2': ('Cumulative bank erosion','kg/m²','YlOrBr'),
+    'collapse_kg_m2': ('Cumulative collapse','kg/m²','YlOrBr'),
+    'bank_failure_count': ('Bank-failure count','—','YlOrBr'),
+    'bedform_height_m': ('Bedform height','m','YlOrBr'),
     'erodible_depth_m': ('Erodible bed depth','m','copper'),
     'sediment_stock_kg_m2': ('Bed sediment stock','kg/m²','copper'),
     'suspended_kg_m3': ('Suspended concentration','kg/m³','YlGn'),
@@ -46,7 +56,23 @@ def variable_info(key):
     if key not in VARIABLES:raise ValueError('Unknown result variable')
     return VARIABLES[key]
 
-SEDIMENT_VARIABLES={'bedload_m2_s','erodible_depth_m','sediment_stock_kg_m2','suspended_kg_m3','mobile_bedload_concentration','bedload_capacity_m2_s'}
+SEDIMENT_VARIABLES={'bedload_m2_s','erodible_depth_m','sediment_stock_kg_m2','suspended_kg_m3','mobile_bedload_concentration','bedload_capacity_m2_s','suspended_mass_kg_m2'}
+
+# Only these scalar quantities are offered by the map-field selector.  The
+# x/y velocity components remain available inside the conserved q array for
+# diagnostics and vector operations, but are deliberately not user-facing
+# report choices unless a later vector-display tool explicitly asks for them.
+CORE_MAP_VARIABLES=frozenset(('depth_m','velocity_m_s','stage_m','bed_m',
+                              'unit_discharge_m2_s','froude'))
+OUTPUT_MAP_VARIABLES={
+    'initial_bed': frozenset(('initial_bed_m','bed_change_m')),
+    'bedrock': frozenset(('bedrock_m','erodible_depth_m')),
+    'bedload': frozenset(('bedload_m2_s','bedload_capacity_m2_s')),
+    'suspended': frozenset(('suspended_mass_kg_m2','suspended_kg_m3')),
+    'advanced_hydraulics': frozenset(('secondary_hI_m2_s','secondary_intensity_m_s','dispersion_flux_m2_s')),
+    'bank_and_collapse': frozenset(('bank_erosion_kg_m2','collapse_kg_m2','bank_failure_count')),
+    'bedforms': frozenset(('bedform_height_m',)),
+}
 
 
 def _read_json(path):
@@ -105,6 +131,12 @@ class ResultFrame:
 
     @property
     def values(self):
+        def cell_total(array):
+            """Sum class/component axes while preserving the cell axis."""
+            value=np.asarray(array)
+            if value.ndim==1:return value
+            return value.sum(axis=tuple(range(value.ndim-1)))
+
         h = self.q[0]
         u = np.divide(self.q[1], h, out=np.zeros_like(h), where=h > 1e-6)
         v = np.divide(self.q[2], h, out=np.zeros_like(h), where=h > 1e-6)
@@ -112,12 +144,29 @@ class ResultFrame:
         values=dict(depth_m=h, velocity_m_s=speed, stage_m=h+self.z, bed_m=self.z,
             velocity_x_m_s=u, velocity_y_m_s=v, unit_discharge_m2_s=np.hypot(*self.q[1:]),
             froude=np.divide(speed, np.sqrt(9.81*np.maximum(h, 0.)), out=np.zeros_like(h), where=h > 1e-6))
+        if 'initial_bed_m' in self.arrays:values['bed_change_m']=self.z-self.arrays['initial_bed_m']
         if 'bedload_vector_m2_s' in self.arrays:values['bedload_m2_s']=np.linalg.norm(self.arrays['bedload_vector_m2_s'],axis=0)
-        for name in ('mobile_bedload_concentration','secondary_intensity_m_s','bedload_capacity_m2_s'):
+        for name in ('mobile_bedload_concentration','secondary_intensity_m_s','secondary_hI_m2_s','bedload_capacity_m2_s'):
             if name in self.arrays:values[name]=self.arrays[name]
+        # The ordinary secondary-current route stores its conservative state
+        # hI as ``W``.  Present both the state and physical intensity without
+        # writing a duplicate array solely for visualisation.
+        if 'W' in self.arrays:
+            values['secondary_hI_m2_s']=self.arrays['W']
+            values['secondary_intensity_m_s']=np.divide(self.arrays['W'],h,out=np.zeros_like(h),where=h>1e-6)
         if 'rock' in self.arrays:values['erodible_depth_m']=np.maximum(0.,self.z-self.arrays['rock'])
+        if 'initial_bed_m' in self.arrays:values['initial_bed_m']=self.arrays['initial_bed_m']
+        if 'rock' in self.arrays:values['bedrock_m']=self.arrays['rock']
         if 'mass' in self.arrays:values['sediment_stock_kg_m2']=self.arrays['mass'].sum(axis=(0,1))
-        if 'suspended' in self.arrays:values['suspended_kg_m3']=np.divide(self.arrays['suspended'].sum(0),h,out=np.zeros_like(h),where=h>1e-6)
+        if 'suspended' in self.arrays:
+            suspended=cell_total(self.arrays['suspended'])
+            values['suspended_mass_kg_m2']=suspended
+            values['suspended_kg_m3']=np.divide(suspended,h,out=np.zeros_like(h),where=h>1e-6)
+        if 'bank' in self.arrays:values['bank_erosion_kg_m2']=cell_total(self.arrays['bank'])
+        if 'collapse' in self.arrays:values['collapse_kg_m2']=cell_total(self.arrays['collapse'])
+        if 'bank_failure_count' in self.arrays:values['bank_failure_count']=cell_total(self.arrays['bank_failure_count'])
+        if 'bedforms' in self.arrays:values['bedform_height_m']=self.arrays['bedforms'][0]
+        if 'dispersion_flux_m2_s' in self.arrays:values['dispersion_flux_m2_s']=np.linalg.norm(self.arrays['dispersion_flux_m2_s'],axis=0)
         return values
 
 
@@ -242,15 +291,17 @@ class ResultsStore:
                   'suspended': ('sus_boundary', 'Suspended flow', 'kg/s')}
         if quantity not in fields: raise ValueError('Unknown boundary-flow quantity')
         field, label, unit = fields[quantity]; cumulative = []
-        for i in range(len(self.times)):
+        # A progress callback can process UI events and refresh the live index.
+        # Keep one immutable time axis for the whole measurement.
+        times = self.times
+        for i in range(len(times)):
             if cancelled and cancelled(): raise InterruptedError('Boundary flow cancelled')
             frame = self.read(i); mask = self._boundary_mask(frame, bc_id)
             ledger = frame.arrays.get(field)
             if ledger is None or ledger.shape[-1:] != mask.shape or not np.isfinite(ledger).all():
                 raise ValueError('Accepted boundary ledger is unavailable or does not match the saved faces')
             cumulative.append(float(np.sum(ledger[..., mask])))
-            if progress: progress((i+1)/len(self.times))
-        times = self.times
+            if progress: progress((i+1)/len(times))
         rate = np.diff(cumulative)/np.diff(times)
         if magnitude: rate = np.abs(rate)
         return Series((times[1:]+times[:-1])/2, rate, f'{label}: {bc_id}', unit,
@@ -351,7 +402,13 @@ class ResultsStore:
             variable_info(variable)
             if variable not in frame.values:raise ValueError('This result does not contain '+variable_info(variable)[0]+'. Run with the current output format; missing fields are not reconstructed as zeros.')
             return frame.values[variable]
-        if 'initial_bed_m' in frame.arrays:return frame.z-frame.arrays['initial_bed_m']
+        if 'initial_bed_m' in frame.arrays:
+            baseline=frame.arrays['initial_bed_m']
+            change=frame.z-baseline
+            # Bed and reference follow different floating-point accumulation
+            # paths. Do not magnify cancellation noise into a coloured map.
+            tolerance=8*np.finfo(float).eps*np.maximum(1.,np.maximum(np.abs(frame.z),np.abs(baseline)))
+            return np.where(np.abs(change)<=tolerance,0.,change)
         first = self.read(0)
         key = frame.epoch
         if key not in self._initial_bed:
@@ -368,7 +425,9 @@ class ResultsStore:
                         raise ValueError('Initial mesh does not cover the current result cell')
                     baseline[i] = integral/area
             self._initial_bed[key] = baseline
-        return frame.z-self._initial_bed[key]
+        baseline=self._initial_bed[key];change=frame.z-baseline
+        tolerance=8*np.finfo(float).eps*np.maximum(1.,np.maximum(np.abs(frame.z),np.abs(baseline)))
+        return np.where(np.abs(change)<=tolerance,0.,change)
 
     def _owner(self, frame, point):
         candidates = [int(i) for i in self._trees[frame.epoch].query(point) if frame.polygons[int(i)].covers(point)]
@@ -380,14 +439,14 @@ class ResultsStore:
         point = np.asarray(point, dtype=float)
         if point.shape != (2,) or not np.isfinite(point).all(): raise ValueError('A finite probe coordinate pair is required')
         variable_info(variable)
-        point = Point(*point); values = []
-        for i in range(len(self.times)):
+        point = Point(*point); values = []; times = self.times
+        for i in range(len(times)):
             if cancelled and cancelled(): raise InterruptedError('Probe cancelled')
             frame = self.read(i); cell = self._owner(frame, point)
             values.append(np.nan if cell is None else self.values(frame, variable)[cell])
-            if progress: progress((i+1)/len(self.times))
+            if progress: progress((i+1)/len(times))
         label, unit, _ = variable_info(variable)
-        return Series(self.times, np.asarray(values), label, unit,
+        return Series(times, np.asarray(values), label, unit,
             'Stored cell-constant value at probe; outside domain is NaN; shared-edge tie uses lowest leaf ID')
 
     def spatial_profile(self,points,variable='depth_m',index=-1,*,interpolate=False):
@@ -467,8 +526,8 @@ class ResultsStore:
         if profile:columns.append('flow_m3_s')
         if bedload:columns.append('bedload_solid_m3_s')
         if suspension:columns.append('suspended_advective_kg_s')
-        rows=[]
-        for i,time in enumerate(self.times):
+        rows=[];times=self.times
+        for i,time in enumerate(times):
             if cancelled and cancelled():raise InterruptedError('CSV export cancelled')
             frame=self.read(i);row=[time]
             if profile:
@@ -486,7 +545,7 @@ class ResultsStore:
                 owner=self._owner(frame,Point(*points[0]))
                 row.extend(np.nan if owner is None else self.values(frame,v)[owner] for v in variables)
             rows.append(row)
-            if progress:progress((i+1)/len(self.times))
+            if progress:progress((i+1)/len(times))
         return columns,rows
 
     def transect(self, points, *, magnitude=False, progress=None, cancelled=None,quantity='water'):
@@ -495,8 +554,8 @@ class ResultsStore:
             raise ValueError('A finite polyline with at least two points is required')
         if np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)) <= 0:
             raise ValueError('Transect has zero length')
-        result = []
-        for i in range(len(self.times)):
+        result = []; times = self.times
+        for i in range(len(times)):
             if cancelled and cancelled(): raise InterruptedError('Transect cancelled')
             frame = self.read(i);weights=self._transect_weights(frame,points)
             if quantity=='water':vector=frame.water_vector
@@ -513,38 +572,42 @@ class ResultsStore:
                 lengths=sum((np.linalg.norm(self._transect_weights(frame,np.array([a,b])),axis=0) for a,b in zip(points,points[1:])),np.zeros(len(frame.polygons)))
                 flow=float(np.dot(lengths,values)/lengths.sum()) if lengths.sum()>0 else np.nan
                 result.append(flow)
-                if progress:progress((i+1)/len(self.times))
+                if progress:progress((i+1)/len(times))
                 continue
             flow = float(np.sum(weights*vector))
             result.append(abs(flow) if magnitude else flow)
-            if progress: progress((i+1)/len(self.times))
+            if progress: progress((i+1)/len(times))
         names={'water':('Water flow','m³/s'),'bedload':('Bedload flow','m³/s solid'),
                'suspended':('Suspended advective flow','kg/s'),'total_solid':('Total sediment advective + bedload flow','m³/s solid')}
         label,unit=names[quantity] if quantity in names else variable_info(quantity)[:2]
         method=('Line integral of stored cell vectors; bedload is reconstructed from the last accepted limited face flux, without the morphological multiplier. Not an exact boundary ledger; suspended diffusion is not included.' if quantity in names else 'Length-weighted mean of stored cell values along the profile.')
         if quantity in names and 'mobile_bedload_solid_m' in self.read(0).arrays:
             method='Line integral of instantaneous cell phase vectors: mobile-solid advection plus relative drift, water = mixture minus solid. Not an exact accepted boundary ledger.'
-        return Series(self.times,np.asarray(result),label,unit,method)
+        return Series(times,np.asarray(result),label,unit,method)
 
-    def payload(self, index=-1, variable='depth_m', *, mesh_mode='none', limits=None,palette=None):
+    def payload(self, index=-1, variable='depth_m', *, mesh_mode='none', limits=None,palette=None,
+                zero_transparent=True):
         frame = self.read(index); values = self.values(frame, variable)
-        display=self.display_values(frame,variable)
-        rgba, limits = colour_values(display, variable, limits=limits,palette=palette)
+        display=self.display_values(frame,variable,values=values,zero_transparent=zero_transparent)
+        rgba, limits = colour_values(display, variable, limits=limits,palette=palette,
+                                     zero_transparent=zero_transparent)
         if mesh_mode not in ('none', 'initial', 'adaptive'): raise ValueError('Unknown mesh display mode')
-        mesh_polygons = self.read(0).polygons if mesh_mode == 'initial' else frame.polygons if mesh_mode == 'adaptive' else ()
+        if mesh_mode=='initial':
+            mesh_polygons=frame.polygons if self.index['frames'][0]['epoch']==frame.epoch else self.read(0).polygons
+        else:mesh_polygons=frame.polygons if mesh_mode=='adaptive' else ()
         label, unit, default_palette = variable_info(variable);palette=palette or default_palette
         if variable.startswith('hub_velocity_m_s:'):label+=f"; z={self.hub_field(frame,variable)['elevation_m']:.3f} m; near wake masked"
         return dict(frame=frame, variable=variable, values=values, rgba=rgba, limits=limits, palette=palette,
             label=f'{label} [{unit}]', time_s=frame.time_s, polygons=frame.polygons, mesh_polygons=mesh_polygons)
 
-    def display_values(self,frame,variable):
+    def display_values(self,frame,variable,*,values=None,zero_transparent=True):
         """Exclude dry terrain from hydraulic colors AND their legend range."""
-        values=self.values(frame,variable).copy()
-        if variable not in ('bed_m','bed_change_m','erodible_depth_m','sediment_stock_kg_m2'):values[frame.q[0]<=1e-6]=np.nan
+        values=(self.values(frame,variable) if values is None else values).copy()
+        if zero_transparent and variable not in ('bed_m','bed_change_m','initial_bed_m','bedrock_m','erodible_depth_m','sediment_stock_kg_m2'):values[frame.q[0]<=1e-6]=np.nan
         return values
 
 
-def colour_values(values, variable, *, limits=None,palette=None):
+def colour_values(values, variable, *, limits=None,palette=None,zero_transparent=True):
     from matplotlib import colormaps
     values = np.asarray(values, dtype=float); valid = np.isfinite(values)
     variable_info(variable)
@@ -559,7 +622,7 @@ def colour_values(values, variable, *, limits=None,palette=None):
     if not math.isfinite(lo+hi) or hi <= lo: raise ValueError('Color limits must be finite and increasing')
     rgba = colormaps[palette or variable_info(variable)[2]](np.clip(np.nan_to_num((values-lo)/(hi-lo)), 0, 1), bytes=True)
     rgba[~valid, 3] = 0
-    rgba[values == 0., 3] = 0
+    if zero_transparent: rgba[values == 0., 3] = 0
     return rgba, (lo, hi)
 
 
@@ -640,7 +703,7 @@ if QWidget is not None:
         """One Qt item, native polygons, no interpolation/display grid."""
         def __init__(self, to_scene=None, *, outline=False):
             super().__init__(); self.to_scene = to_scene or (lambda x, y: QPointF(x, -y))
-            self.outline = outline; self.paths = []; self.colors = []; self._bounds = QRectF(); self._key = None; self._polygons = None
+            self.outline = outline; self.paths = []; self.colors = []; self._bounds = QRectF(); self._key = None; self._polygons = None; self._outline_path=QPainterPath()
             self.setZValue(21 if outline else 20)
 
         def set_data(self, polygons, rgba=None):
@@ -649,7 +712,7 @@ if QWidget is not None:
             origin = self.to_scene(0., 0.)
             key = (id(polygons), origin.x(), origin.y())
             if key != self._key:
-                self.prepareGeometryChange(); self.paths = []; bounds = QRectF()
+                self.prepareGeometryChange(); self.paths = []; bounds = QRectF();self._outline_path=QPainterPath()
                 for poly in polygons:
                     path = QPainterPath(); path.setFillRule(Qt.FillRule.OddEvenFill)
                     for piece in (poly.geoms if poly.geom_type == 'MultiPolygon' else (poly,)):
@@ -658,6 +721,7 @@ if QWidget is not None:
                             for point in points[1:]: path.lineTo(self.to_scene(*point))
                             path.closeSubpath()
                     self.paths.append(path); bounds = bounds.united(path.boundingRect())
+                    if self.outline:self._outline_path.addPath(path)
                 self._bounds = bounds; self._key = key; self._polygons = polygons
             self.colors = [] if rgba is None else [QColor(*map(int, row)) for row in rgba]
             self.setVisible(bool(self.paths)); self.update()
@@ -668,9 +732,10 @@ if QWidget is not None:
             if self.outline:
                 from ._avac.preferences import mesh_color
                 pen = QPen(QColor(mesh_color()), .65); pen.setCosmetic(True); painter.setPen(pen); painter.setBrush(Qt.BrushStyle.NoBrush)
-                for path in self.paths: painter.drawPath(path)
+                painter.drawPath(self._outline_path)
             else:
                 painter.save(); painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+                if getattr(self,'domain_clip',None) is not None:painter.setClipPath(self.domain_clip,Qt.IntersectClip)
                 painter.setPen(Qt.PenStyle.NoPen)
                 for path, color in zip(self.paths, self.colors):
                     if color.alpha(): painter.setBrush(color); painter.drawPath(path)
@@ -682,14 +747,16 @@ if QWidget is not None:
         probe_requested = Signal()
         transect_requested = Signal()
         measurements_changed = Signal(object)
+        geometry_edit_started = Signal()
         error = Signal(str)
 
         def __init__(self, map_view=None, parent=None):
             super().__init__(parent); self.map_view = map_view; self.store = None; self.probe_point = None; self.transect_points = None
             self._turbine_snapshot=None;self._live_output=None
-            self._field_item = None; self._mesh_item = None; self._last_series = None; self._dialogs = [];self._smooth_item=None
+            self._field_item = None; self._mesh_item = None; self._terrain_item = None; self._last_series = None; self._dialogs = [];self._smooth_item=None;self._smooth_cache=OrderedDict()
             from ._avac.preferences import settings
-            self.smooth=settings().value('map/smooth_results',True,type=bool);self._results_active=True;self._particles_enabled=False;self.particles=None
+            from ._avac.preferences import smooth_level
+            self.smooth=settings().value('map/smooth_results',True,type=bool);self.smooth_level=smooth_level();self.terrain_aware_wetting=settings().value('map/terrain_aware_wetting',False,type=bool);self._results_active=True;self._particles_enabled=False;self.particles=None
             if map_view is not None and hasattr(map_view,'terrain') and callable(getattr(map_view,'to_scene',None)):
                 from .visual_fields import ParticleTracks
                 self.particles=ParticleTracks(map_view)
@@ -750,7 +817,10 @@ if QWidget is not None:
             texport=QPushButton('Export all turbines to CSV');texport.clicked.connect(self.export_turbine);tform.addWidget(texport)
             selected_export=QPushButton('Export selected turbine to CSV');selected_export.clicked.connect(lambda:self.export_turbine(selected=True));tform.addWidget(selected_export)
             energy_export=QPushButton('Export all turbine power and energy to CSV');energy_export.clicked.connect(self.export_turbine_energy);tform.addWidget(energy_export)
+            self.jordan_compare_button=QPushButton('Jordan analytical / hydraulic comparison…');self.jordan_compare_button.clicked.connect(self.compare_jordan);tform.addWidget(self.jordan_compare_button)
+            self.jordan_compare_button.setToolTip('Compare this turbine-on run with a separate turbine-free ambient run and an explicit analytical calibration. Keeps both powers and the hydraulic velocity field.')
             self.turbine_buttons=(tplot,texport,selected_export,energy_export)
+            for key,label in [('uncorrected_power_W','Uncorrected Thetis power (W)'),('power_correction_factor','Analytical wake power factor'),('rotor_power_velocity_m_s','Rotor energy-equivalent speed (m/s)'),('active_upstream_wakes','Contributing upstream wakes'),('ambient_reference_velocity_m_s','First-row incoming reference (m/s)'),('inferred_ambient_discrepancy_percent','Local ambient consistency difference (%)')]:self.turbine_quantity.addItem(label,key)
             self.turbine_status=QLabel('Waiting for the first saved turbine sample.');self.turbine_status.setWordWrap(True);tform.addWidget(self.turbine_status)
             for button in self.turbine_buttons:button.setEnabled(False)
             tnote=QLabel('Choose a turbine to plot its individual history. CSV includes its ID, model, Ct/Cp, velocities, coverage, thrust, power and status at each accepted result time. Each uncovered rotor switches off independently.');tnote.setWordWrap(True);tform.addWidget(tnote)
@@ -789,11 +859,20 @@ if QWidget is not None:
             selected=self.variable.currentData();self.variable.blockSignals(True);self.variable.clear()
             choices=dict(VARIABLES)
             if self.store:choices.update({key:variable_info(key) for key in self.store.hub_variables})
+            configured=None if self.store is None else (self.store.project or {}).get('settings',{}).get('output_fields')
+            permitted=set(CORE_MAP_VARIABLES)
+            # Runs saved before selectable output fields retain their historic
+            # full inventory.  New runs use precisely their saved selection.
+            groups=OUTPUT_MAP_VARIABLES if configured is not None else {key:frozenset((key,)) for key in ()}
+            if configured is None:
+                permitted.update(key for key in choices if key not in {'velocity_x_m_s','velocity_y_m_s'})
+            else:
+                for group in configured:permitted.update(groups.get(group,()))
             for key,(label,unit,_) in choices.items():
-                available=(key.startswith('hub_velocity_m_s:') or key=='bed_change_m' or self.store is None or key in self.store.read(0).values)
+                available=(key.startswith('hub_velocity_m_s:') or self.store is None or key in self.store.read(0).values)
                 sediment=(self.store.project or {}).get('model',{}).get('physics',{}).get('sediment') if self.store else None
                 if key=='suspended_kg_m3' and (not sediment or sediment['suspension']=='off'):available=False
-                if available and (enabled or key not in {'bed_m','bed_change_m',*SEDIMENT_VARIABLES}):self.variable.addItem(f'{label} [{unit}]',key)
+                if available and key in permitted:self.variable.addItem(f'{label} [{unit}]',key)
             if self.variable.findData(selected)>=0:self.variable.setCurrentIndex(self.variable.findData(selected))
             self.variable.blockSignals(False)
             if hasattr(self,'profile_quantity'):
@@ -849,7 +928,7 @@ if QWidget is not None:
                     raise ValueError('Open the containing project folder first; the result/terrain CRS cannot be verified.') from exc
                 if not matching:
                     raise ValueError('Open the containing project folder first; the result CRS differs from the loaded terrain or is missing.')
-            self.timer.stop(); self.play.setText('▶');self.play.setToolTip('Play'); self.store = candidate;self._turbine_snapshot=None
+            self.timer.stop(); self.play.setText('▶');self.play.setToolTip('Play'); self.store = candidate;self._turbine_snapshot=None;self._smooth_cache.clear()
             current_turbine=self.turbine_select.currentText();self.turbine_select.clear()
             self.turbine_select.addItems([r['id'] for r in ((candidate.project or {}).get('power_plan',{}).get('layout') or candidate.context.get('turbines') or {}).get('turbines',[])])
             self.power_estimate_button.setVisible(bool((candidate.project or {}).get('power_plan')))
@@ -875,10 +954,10 @@ if QWidget is not None:
             self.probes=[];self.profiles=[];self._selected_probe=self._selected_profile=None
             self._sync_lists()
             self.slider.blockSignals(True); self.slider.setRange(0, 0); self.slider.blockSignals(False)
-            for item in (self._field_item, self._mesh_item,self._smooth_item):
+            for item in (self._field_item, self._mesh_item,self._terrain_item,self._smooth_item):
                 if item is not None and isValid(item) and item.scene() is not None: item.scene().removeItem(item)
-            self._field_item = self._mesh_item = None; self.caption.setText('No results loaded')
-            self._smooth_item=None
+            self._field_item = self._mesh_item = self._terrain_item = None; self.caption.setText('No results loaded')
+            self._smooth_item=None;self._smooth_cache.clear()
             self.boundary.clear()
             self._draw_measurements()
             if self.map_view is not None:
@@ -907,6 +986,18 @@ if QWidget is not None:
         def result_style(self,variable=None):
             return getattr(self.map_view,'styles',{}).get('result:'+(variable or self.variable.currentData()),{})
 
+        def _saved_domain_geometry(self):
+            """Exact saved domain used to clip display-only result rasters."""
+            project=(self.store.project if self.store is not None else None) or {}
+            data=project.get('settings',{}).get('domain',{})
+            vertices=data.get('vertices_xy')
+            if not vertices:return None
+            try:
+                from shapely.geometry import Polygon
+                geometry=Polygon(vertices,data.get('holes_xy',()))
+                return geometry if geometry.is_valid and not geometry.is_empty else None
+            except Exception:return None
+
         def _render(self, payload):
             if self.map_view is None: return
             from shiboken6 import isValid
@@ -914,25 +1005,74 @@ if QWidget is not None:
                 mapping = getattr(self.map_view, 'to_scene', None)
                 self._field_item = ResultPolygonItem(mapping); self._mesh_item = ResultPolygonItem(mapping, outline=True)
                 self.map_view.scene().addItem(self._field_item); self.map_view.scene().addItem(self._mesh_item)
-            self._field_item.set_data(payload['polygons'], payload['rgba']); self._mesh_item.set_data(payload['mesh_polygons'])
+            self._field_item.set_data(payload['polygons'], payload['rgba'])
+            from .interpolated_field import painter_path
+            domain_geometry=self._saved_domain_geometry()
+            self._field_item.domain_clip=(painter_path(domain_geometry,self._field_item.to_scene)
+                                          if domain_geometry is not None else None)
+            if payload['mesh_polygons']:self._mesh_item.set_data(payload['mesh_polygons'])
+            else:self._mesh_item.hide()
             opacity=self.result_style(payload['variable']).get('opacity',1.)
             self._field_item.setOpacity(opacity)
             self._smooth_ready=False
             if self._smooth_item is not None and not isValid(self._smooth_item):self._smooth_item=None
-            if self.smooth and not payload['variable'].startswith('hub_velocity_m_s:') and hasattr(self.map_view,'terrain') and callable(getattr(self.map_view,'to_scene',None)):
-                from .visual_fields import raster_field
-                from PySide6.QtGui import QPixmap,QTransform
-                from PySide6.QtWidgets import QGraphicsPixmapItem
-                raster=raster_field(payload['frame'],payload['values'],payload['variable'],payload['limits'],self.map_view.to_scene,palette=payload['palette'])
+            render_smooth=self.smooth and self.smooth_level>0
+            # This is deliberately restricted to depth-averaged hydraulic
+            # layers.  Bedload, suspended load and bed change remain shown on
+            # their actual finite-volume cells; a display-only wet wedge must
+            # not imply that those processes were computed sub-cell.
+            terrain_wetting_variables=frozenset(('depth_m','velocity_m_s','stage_m','unit_discharge_m2_s','froude','velocity_x_m_s','velocity_y_m_s'))
+            render_terrain_wetting=self.terrain_aware_wetting and payload['variable'] in terrain_wetting_variables
+            frame_for_display=payload['frame']
+            # A published live frame must never make the event loop wait for
+            # a large sub-cell drawing pass.  Keep the responsive native-cell
+            # view until the run completes, then restore this option.
+            if render_terrain_wetting:
+                # Keep the native finite-volume map as the base layer and
+                # replace only its shallow shoreline cells with exact,
+                # volume-conserving terrain wedges. This remains responsive
+                # during live AMR because thousands of unchanged interiors do
+                # not need new QPainter paths each saved frame.
+                from .visual_fields import terrain_wet_edges
+                rows,display=terrain_wet_edges(frame_for_display)
+                rgba=np.array(payload['rgba'],copy=True)
+                if self.result_style(payload['variable']).get('zero_transparent',True):
+                    rgba[rows,3]=0
+                else:
+                    zero_color=colour_values(np.array([0.]),payload['variable'],limits=payload['limits'],palette=payload['palette'],zero_transparent=False)[0][0]
+                    rgba[rows]=zero_color
+                self._field_item.set_data(payload['polygons'],rgba)
+                if self._terrain_item is None or not isValid(self._terrain_item):
+                    self._terrain_item=ResultPolygonItem(self.map_view.to_scene);self._terrain_item.setZValue(20.1);self.map_view.scene().addItem(self._terrain_item)
+                self._terrain_item.set_data(display,payload['rgba'][rows])
+                self._terrain_item.domain_clip=self._field_item.domain_clip
+                self._terrain_item.setOpacity(opacity);self._terrain_item.setVisible(bool(len(rows)))
+                self._field_item.show()
+                if self._smooth_item is not None:self._smooth_item.hide()
+                self._smooth_ready=False
+            else:
+                # Clear, rather than only hide, the prior frame's clipped
+                # wedges.  A later layer-visibility refresh must never revive
+                # a terrain overlay after this option is switched off.
+                if self._terrain_item is not None and isValid(self._terrain_item):
+                    self._terrain_item.set_data((),())
+                    self._terrain_item.hide()
+            if render_smooth and not payload['variable'].startswith('hub_velocity_m_s:') and hasattr(self.map_view,'terrain') and callable(getattr(self.map_view,'to_scene',None)):
+                from .interpolated_field import InterpolatedFieldItem
+                frame=frame_for_display
+                origin=self.map_view.to_scene(0.,0.);east=self.map_view.to_scene(1.,0.);north=self.map_view.to_scene(0.,1.)
+                row=self.store.index['frames'][frame.index]
+                zero_transparent=self.result_style(payload['variable']).get(
+                    'zero_transparent', self.map_view.default_zero_transparent('result:'+payload['variable']))
+                key=(str(self.store.output),row['sha256'],row['epoch'],payload['variable'],tuple(payload['limits']),payload['palette'],self.smooth_level,zero_transparent,render_terrain_wetting,origin.x(),origin.y(),east.x(),east.y(),north.x(),north.y())
                 if self._smooth_item is None:
-                    self._smooth_item=QGraphicsPixmapItem();self._smooth_item.setZValue(20);self.map_view.scene().addItem(self._smooth_item)
-                self._field_item.hide();self._smooth_item.setVisible(raster is not None)
-                self._smooth_item.setOpacity(opacity)
-                self._smooth_ready=raster is not None
-                if raster:
-                    image,bounds=raster;self._smooth_item.setPixmap(QPixmap.fromImage(image));self._smooth_item.setPos(bounds.topLeft())
-                    self._smooth_item.setTransform(QTransform.fromScale(bounds.width()/image.width(),bounds.height()/image.height()))
-                    self._smooth_item.setTransformationMode(Qt.SmoothTransformation)
+                    self._smooth_item=InterpolatedFieldItem(self.map_view.to_scene);self.map_view.scene().addItem(self._smooth_item)
+                if getattr(self._smooth_item,'field_key',None)!=key:
+                    self._smooth_item.set_field(frame,payload['values'],payload['variable'],payload['limits'],payload['palette'],domain=self._saved_domain_geometry(),terrain=render_terrain_wetting,zero_transparent=zero_transparent)
+                    self._smooth_item.field_key=key
+                self._field_item.show()
+                self._smooth_item.setOpacity(opacity*min(1.,self.smooth_level/100.))
+                self._smooth_ready=True
             elif self._smooth_item is not None:self._smooth_item.hide()
             if hasattr(self.map_view, 'time_text'): self.map_view.time_text = f"t = {payload['time_s']:g} s"
             if hasattr(self.map_view, 'set_result_metadata'): self.map_view.set_result_metadata(payload)
@@ -943,7 +1083,10 @@ if QWidget is not None:
             if self.store is None: return False
             try:
                 style=self.result_style()
-                payload = self.store.payload(self.slider.value(), self.variable.currentData(), mesh_mode=self._mode(),limits=style.get('limits'),palette=style.get('palette'))
+                variable=self.variable.currentData()
+                default_zero=getattr(self.map_view,'default_zero_transparent',lambda key:True)
+                zero_transparent=style.get('zero_transparent',default_zero('result:'+variable))
+                payload = self.store.payload(self.slider.value(), variable, mesh_mode=self._mode(),limits=style.get('limits'),palette=style.get('palette'),zero_transparent=zero_transparent)
                 self._render(payload); self.frame_changed.emit(payload)
                 self._update_particles(payload['frame'])
                 self.caption.setText(f"t = {display_number(payload['time_s'])} s · {len(payload['values']):,} cells · frame {self.slider.value()+1}/{len(self.store.times)}\n{payload['label']}: {display_number(payload['limits'][0])} to {display_number(payload['limits'][1])}")
@@ -984,6 +1127,7 @@ if QWidget is not None:
             if point.shape != (2,) or not np.isfinite(point).all(): self._fail('A finite probe coordinate pair is required'); return
             name='Probe '+str(max([int(p['id'].split('_')[-1]) for p in self.probes]+[0])+1)
             identifier='probe_'+name.split()[-1]
+            self.geometry_edit_started.emit()
             self.probes.append(dict(id=identifier,name=name,coords=[point.tolist()]));self._selected_probe=identifier;self._active_kind='gauge';self._sync_lists()
             if self.map_view is not None and hasattr(self.map_view, 'set_tool'): self.map_view.set_tool('pan')
             self.caption.setText(f'Probe: {self.probe_point[0]:.3f}, {self.probe_point[1]:.3f}')
@@ -995,6 +1139,7 @@ if QWidget is not None:
             if np.sum(np.linalg.norm(np.diff(points,axis=0),axis=1))<=0:self._fail('Profile must have positive length');return
             name='Profile '+str(max([int(p['id'].split('_')[-1]) for p in self.profiles]+[0])+1)
             identifier='profile_'+name.split()[-1]
+            self.geometry_edit_started.emit()
             self.profiles.append(dict(id=identifier,name=name,coords=points.tolist()));self._selected_profile=identifier;self._active_kind='profile';self._sync_lists()
             if self.map_view is not None and hasattr(self.map_view, 'set_tool'): self.map_view.set_tool('pan')
             self.caption.setText(f'Flow transect: {len(points)} vertices')
@@ -1048,6 +1193,7 @@ if QWidget is not None:
         def delete_measurement(self,kind):
             identifier=self._selected_probe if kind=='gauge' else self._selected_profile
             if identifier is None:return
+            self.geometry_edit_started.emit()
             if self.map_view is not None:self.map_view.set_tool('pan')
             if kind=='gauge':self.probes=[p for p in self.probes if p['id']!=identifier];self._selected_probe=None
             else:self.profiles=[p for p in self.profiles if p['id']!=identifier];self._selected_profile=None
@@ -1059,6 +1205,7 @@ if QWidget is not None:
             if row is None:return
             if kind=='profile' and np.sum(np.linalg.norm(np.diff(points,axis=0),axis=1))<=0:
                 self._fail('Profile must retain positive length');self.map_view.set_tool('pan');self._draw_measurements();return
+            self.geometry_edit_started.emit()
             row['coords']=np.asarray(points,float).tolist();self._sync_lists();self._draw_measurements();self.measurements_changed.emit(self.measurement_state())
 
         def _draw_measurements(self):
@@ -1191,6 +1338,20 @@ if QWidget is not None:
             except Exception as exc:self._fail(exc)
             finally:self.power_estimate_button.setEnabled(True)
 
+        def compare_jordan(self):
+            if self.store is None:self._fail('Load the turbine-on results first.');return
+            ambient=QFileDialog.getExistingDirectory(self,'Choose turbine-free ambient run (contains RUN_CONTEXT.json)')
+            if not ambient:return
+            config,_=QFileDialog.getOpenFileName(self,'Choose Jordan wake calibration and device curves','','JSON (*.json)')
+            if not config:return
+            try:
+                from .jordan_comparison import compare
+                self.jordan_compare_button.setEnabled(False)
+                dest,rows=self._measure(lambda p,c:compare(ResultsStore(ambient),self.store,_read_json(config),progress=p,cancelled=c))
+                QMessageBox.information(self,'Jordan comparison exported',f'Analytical and hydraulic power are saved separately in:\n{dest / "POWER.csv"}\n\nThe hydraulic velocity field is unchanged. Calibration against the hydraulic model is not independent experimental validation.')
+            except Exception as exc:self._fail(exc)
+            finally:self.jordan_compare_button.setEnabled(True)
+
         def plot_turbine(self):
             try:
                 rows=[r for r in self._turbine_rows() if r['turbine_id']==self.turbine_select.currentText()];key=self.turbine_quantity.currentData();unit='N' if key=='thrust_N' else 'W' if key.endswith('_W') else 'm/s' if key.endswith('_m_s') else 'RPM' if key.endswith('_rpm') else 'm' if key.endswith('_m') else '—'
@@ -1318,6 +1479,47 @@ if QWidget is not None:
                 self.caption.setText('Exported '+filename)
             except Exception as exc: self._fail(exc)
             finally: self.show_frame()
+
+        def export_current_bank_lines(self):
+            if self.store is None or not len(self.store.times):
+                self._fail('Load saved results before exporting river-bank breaklines');return
+            frame=self.store.read(self.slider.value())
+            filename,_=QFileDialog.getSaveFileName(self,'Export river-bank breaklines',
+                f'{self.project_name}_river_banks_t{frame.time_s:g}s.geojson','GeoJSON (*.geojson)')
+            if not filename:return
+            try:
+                from .river_bank_lines import export_bank_lines
+                path,audit_path,audit=export_bank_lines(frame,self.store.project,filename,crs_wkt=self.store.crs)
+                self.caption.setText(f'Exported {audit["lines"]} river-bank breaklines at t={frame.time_s:g} s')
+                QMessageBox.information(self,'River-bank breaklines exported',
+                    f'River-bank breaklines saved to:\n{path}\n\n'
+                    'Import them with Mesh > Import breaklines, then generate the mesh. '
+                    'The lines follow the selected frame shoreline and allow water across them as discharge changes.')
+            except Exception as exc:self._fail(exc)
+
+        def _legacy_export_current_domain(self):
+            """Export the displayed wet footprint as an importable domain polygon."""
+            if self.store is None or not len(self.store.times):
+                self._fail('Load saved results before exporting a flooded domain'); return
+            frame = self.store.read(self.slider.value())
+            default = f'{self.project_name}_flooded_domain_t{frame.time_s:g}s.geojson'
+            filename, _ = QFileDialog.getSaveFileName(
+                self, 'Export result as domain', default, 'GeoJSON (*.geojson *.json)')
+            if not filename:return
+            try:
+                from .result_domain import export_result_domain
+                path, audit_path, audit = export_result_domain(frame, filename, crs_wkt=self.store.crs)
+                note = (f'Flooded domain exported: {path.name} · {audit["vertices"]} vertices · '
+                        f'{audit["wet_depth_threshold_m"]:g} m wet-depth threshold')
+                if audit['disconnected_components_discarded']:
+                    note += f' · discarded {audit["disconnected_components_discarded"]} disconnected wet component(s)'
+                self.caption.setText(note)
+                QMessageBox.information(self, 'Flooded domain exported',
+                    f'An importable, smoothed domain was written to:\n{path}\n\n'
+                    f'Export audit: {audit_path}\n\n'
+                    'It uses the currently displayed result time and a 5 mm wet-depth threshold. '
+                    'Import it from Geometry → Import domain, then review and assign its boundaries.')
+            except Exception as exc:self._fail(exc)
 else:
     class ResultsPanel:
         def __init__(self, *args, **kwargs): raise RuntimeError('BRAIDS Desktop requires PySide6')

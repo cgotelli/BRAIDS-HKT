@@ -13,7 +13,7 @@ import numpy as np
 
 AUTO_SLOPE='mesh'
 SCHEMA='braids.normal-mesh-slopes.v1'
-METHOD='normal_flow.initial_finest_inward_bed_fit.v1'
+METHOD='normal_flow.initial_finest_section_frame_bed_fit.v2'
 
 
 def _weighted_median(values,weights):
@@ -31,17 +31,17 @@ def inward_bed_slope(mesh,bed,name,*,rings=4):
     faces=[f for f in mesh.faces if f.neighbour<0 and f.kind=='inlet' and f.bc_id==name]
     if not faces:raise ValueError(name+': normal depth has no inlet faces')
     outward=np.asarray(faces[0].outward_normal,float);inward=-outward
-    axis=int(np.argmax(abs(inward)));tangent=np.array([-inward[1],inward[0]])
+    tangent=np.array([-inward[1],inward[0]])
     origin=np.asarray(faces[0].start_xy,float)
     ends=np.asarray([v for f in faces for v in (f.start_xy,f.end_xy)],float)
     scale=max(1.,float(np.max(abs(ends))));tol=max(1e-10,64*np.spacing(scale))
-    if (abs(abs(inward[axis])-1)>1e-12 or abs(inward[1-axis])>1e-12 or
+    if (abs(np.linalg.norm(inward)-1)>1e-12 or
         any(not np.allclose(f.outward_normal,outward,rtol=0,atol=1e-12) for f in faces) or
         np.any(abs((ends-origin)@inward)>tol)):
-        raise ValueError(name+': normal depth requires a collinear axis-aligned inward section')
+        raise ValueError(name+': normal depth requires one collinear section with a consistent inward normal')
     xy=np.asarray([c.centroid_xy for c in cells],float);relative=xy-origin
     distance=relative@inward;station=relative@tangent
-    h=float(mesh.grid.dx_m if axis==0 else mesh.grid.dy_m)
+    h=float(np.hypot(inward[0]*mesh.grid.dx_m,inward[1]*mesh.grid.dy_m))
     if not np.isfinite(h) or h<=0:raise ValueError('Positive finest mesh spacing required')
     transverse=(ends-origin)@tangent;lo=float(transverse.min());hi=float(transverse.max())
     eligible=(distance>=-tol)&(distance<=(rings-.5)*h+tol)&(station>=lo-tol)&(station<=hi+tol)
@@ -62,11 +62,21 @@ def inward_bed_slope(mesh,bed,name,*,rings=4):
     area=np.asarray([c.area_m2 for c in cells],float)
     groups={}
     widths={}
+    # Strip identity is physical transverse station, never a background i/j
+    # index. A merged inlet cell can own several face fragments, and a face
+    # can span several strips. Partition its *length*, not its cell count.
+    count=max(1,int(np.ceil((hi-lo)/h)))
+    edges=lo+np.arange(count+1)*h;edges[-1]=hi
     for f in faces:
-        c=cells[f.owner];key=c.j if axis==0 else c.i
-        widths[key]=widths.get(key,0.)+float(f.length_m)
+        ends_f=(np.asarray([f.start_xy,f.end_xy])-origin)@tangent
+        a,b=sorted(ends_f)
+        first=max(0,min(count-1,int(np.floor((a-lo)/h))))
+        last=max(0,min(count-1,int(np.floor((b-lo)/h))))
+        for key in range(first,last+1):
+            overlap=max(0.,min(b,edges[key+1])-max(a,edges[key]))
+            widths[key]=widths.get(key,0.)+overlap
     for i in ids:
-        c=cells[i];key=c.j if axis==0 else c.i
+        key=max(0,min(count-1,int(np.floor((station[i]-lo)/h))))
         groups.setdefault(key,[]).append(int(i))
     xs=[];ys=[];ts=[];weights=[];used=[];intercepts=[]
     for key,indices in groups.items():
@@ -103,6 +113,7 @@ def inward_bed_slope(mesh,bed,name,*,rings=4):
         strip_slope_range_m_m=[float(min(strip_slopes)),float(max(strip_slopes))],
         strip_slope_weighted_mad_m_m=mad,area_weighted_mean_fit_slope_m_m=mean_fit,strips=intercepts,
         normal_inward=inward.tolist(),finest_spacing_m=h,requested_inward_rows=rings,
+        strip_frame='physical section normal/tangent; boundary-length-weighted transverse strips',
         fit_extent_m=[float(distance[used].min()),float(distance[used].max())],
         sample_cells=len(used),transverse_strips=len(intercepts),transverse_centroid_correction=bool(transverse_fit),
         bed_fit_rms_m=float(np.sqrt(np.average(residual**2,weights=np.asarray(weights)))),

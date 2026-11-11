@@ -43,7 +43,7 @@ def geometry_grid(domain, minimum_size_m, levels):
 
 
 def default_document(dem_path, vertices_xy, crs, *, name="BRAIDS river", backend="cpu",
-                     minimum_size_m=5., levels=3, mesh_mode="static_terrain", end_time_s=60.):
+                     minimum_size_m=5., levels=3, mesh_mode="static_manual", end_time_s=60.):
     """Create a current hydrodynamics-only document, with no inferred boundaries.
 
     All optional physics is off. The initial surface is 0 m in the DEM datum,
@@ -51,8 +51,8 @@ def default_document(dem_path, vertices_xy, crs, *, name="BRAIDS river", backend
     The caller must review initial conditions for their terrain. Fresh checkpoint
     cadence equals the end time; the GUI records its automatic editor choice.
     """
-    if mesh_mode not in ("dynamic_depth", "static_terrain"):
-        raise ValueError("Choose dynamic_depth or static_terrain mesh mode")
+    if mesh_mode not in ("dynamic_depth", "static_terrain", "static_manual"):
+        raise ValueError("Choose static_manual, static_terrain or dynamic_depth mesh mode")
     if type(end_time_s) not in (int, float) or not math.isfinite(end_time_s) or end_time_s <= 0:
         raise ValueError("Simulation duration must be positive finite seconds")
     domain = PolygonDomain("desktop-domain", vertices_xy, crs)
@@ -66,7 +66,7 @@ def default_document(dem_path, vertices_xy, crs, *, name="BRAIDS river", backend
         columns=asdict(columns), hydraulics={}, sediment_boundaries={},
         bank=dict(bank_theta=0., collapse=False, collapse_slope=.5, repose_angle_deg=32.),
         suspension=dict(bed_factor=1., sus_factor=0., diffusivity=0., temperature=20., cref=1600.),
-        adaptation=asdict(FieldSettings(terrain_enabled=mesh_mode == "static_terrain",domain_border_enabled=True)),
+        adaptation=asdict(FieldSettings(terrain_enabled=mesh_mode == "static_terrain",domain_border_enabled=False)),
         adaptive=mesh_mode == "dynamic_depth", end_time_s=float(end_time_s), dt_max_s=1.,
         output_interval_s=min(10., float(end_time_s)), checkpoint_interval_s=float(end_time_s),sediment_start_time_s=0.)
     request=new_model(backend=backend)
@@ -109,7 +109,7 @@ def assign_boundary(document, edge_ids, name, kind, controls=None,*,for_editing=
     """Replace a named section atomically, not accumulate its old faces.
 
     Selected edges are removed from any previous section. An invalid selection
-    (stale, noncollinear, disconnected, or unaligned inlet/outlet) fails without
+    (stale, noncollinear or disconnected inlet/outlet) fails without
     changing the supplied document. Wall edges are allowed to remain cropped.
     """
     result = deepcopy(document)
@@ -144,7 +144,7 @@ def assign_boundary(document, edge_ids, name, kind, controls=None,*,for_editing=
 
 
 def editable_geometry(document):
-    """Editor geometry admits unaligned sections; runnable validation stays strict."""
+    """Validate editable geometry, including straight oblique open sections."""
     from braids_core.boundaries.domain import boundary_polyline
     result=deepcopy(document);domain=PolygonDomain(**result['settings']['domain'])
     rows=[BoundaryAssignment(**a) for a in result['settings']['assignments']]

@@ -20,6 +20,7 @@ from .sediment.capacity_parameters import (
 SCHEMA = "braids.river-model.v3"
 RESOLVED_SCHEMA = "braids.resolved-river-model.v3"
 INTEGRATOR = "explicit_fwave_ssprk22_river_v1"
+HLLC_INTEGRATOR = "explicit_hllc_muscl_hancock_river_v1"
 CAPACITIES = tuple(k for k in FORMULA_CONTRACTS if not k.endswith("_legacy"))
 HIDING = ("hiding.none", "hiding.egiazaroff", "hiding.ashida_michiue",
           "hiding.parker_klm", "hiding.wu_wang_jia")
@@ -115,9 +116,9 @@ def new_model(*, backend="cpu"):
 
 
 def new_bedload_selection():
-    """Explicit editable MPM proposal; does not enable sediment in a model."""
+    """BRAIDS standard proposal; does not enable sediment in a model."""
     return {
-        "capacity": {"method": "capacity.mpm", "parameters": {"ACal": 1.0}, "grain_sizes_m": {}},
+        "capacity": {"method": "capacity.mpm_braids_5_055", "parameters": {}, "grain_sizes_m": {}},
         "transport": "bedload",
         "grains": [{"id": "sand", "diameter_m": 0.0005, "diameter_definition": "d50",
                     "solid_density_kg_m3": 2650.0, "fraction": 1.0}],
@@ -198,8 +199,12 @@ def _resolve_sediment(selection, hydro, decisions):
                           "BetaM has no effect with the current noncohesive fractions (mud fraction zero)"})
     if method == "capacity.wang_fredsoe":
         decisions.append({"path": path + ".capacity", "requested": method, "resolved": method,
-                          "reason": "Uses characteristic shear, not floored Chezy shear; negative "
-                          "native suspended equilibrium is rejected when used as a concentration source"})
+                          "reason": "Locked FLOW TraFrm13/tran9t legacy test formulation, not a full original Engelund-Fredsoe reproduction. "
+                          "Explicit D50 controls particle scale/viscosity-dependent Shields threshold; the literal FLOW D90 argument sets grain friction. "
+                          "Threshold stress uses effective sediment speed and grain friction; bedload amplitude uses separate characteristic shear. "
+                          "VicMol is water kinematic viscosity, not eddy viscosity. ACal multiplies bedload only. "
+                          "The native signed total-minus-bed suspended residual is preserved as a diagnostic and is NOT transported in bedload-only mode; "
+                          "negative native suspended equilibrium is rejected when used as a concentration source."})
     if method in INTRINSIC:
         for key in ("ThetaC0", "Alpha0"):
             if key in values and values[key] < 0.:
@@ -244,6 +249,14 @@ def _resolve_sediment(selection, hydro, decisions):
             'The 2D bed resistance is bed traction, not the cross-section total bed-plus-wall stress '
             'used before the paper flume sidewall correction. No second sidewall correction is applied. '
             'Single uniform grain, lower-regime plane-bed scope. Fixed coefficients; ACal multiplier standard 1.'))
+    if method == 'capacity.ashida_michiue_generalized':
+        decisions.append(dict(path=path+'.capacity',requested=method,resolved=method,
+            reason='Active Delft3D FLOW trab14 generalized Ashida-Michiue, TraFrm=14 (not disabled entry 10). '
+            'Explicit D50 and FLOW effective sediment velocity/Chezy give theta=Ueff^2/(Csed^2*Delta*D50). '
+            'No additional MPM grain/form-drag factor. ACal is the whole dimensionless coefficient A, '
+            'standard 17 (not a multiplier of 17); selected ThetaC and powers are saved explicitly. '
+            'Single bulk material has hiding=1. No intrinsic suspended capacity. '
+            'This is the FLOW variant, not a reproduction of every resistance partition in the original paper.'))
     if method == 'capacity.camenen_larson_2005':
         if len(s['grains'])!=1 or (s['transport']!='bedload' and not independent_suspension):
             _fail(path+'.capacity','Camenen & Larson currently requires one grain and bedload only', 'integration_pending')
@@ -381,7 +394,7 @@ def _resolve_sediment(selection, hydro, decisions):
     # A zero equilibrium suspended capacity is not physical incompatibility.
     # FLOW can still transport and relax externally supplied suspended mass.
     zero_suspended = method in INTRINSIC or method in (
-        "capacity.mpm", "capacity.ashida_michiue_generalized", "capacity.soulsby", "capacity.smart_jaggi",
+        "capacity.mpm_braids_5_055", "capacity.mpm", "capacity.ashida_michiue_generalized", "capacity.soulsby", "capacity.smart_jaggi",
         "capacity.ancey_recking_2023", "capacity.recking_2010", "capacity.camenen_larson_2005", "capacity.wong_parker_2006")
     zero_suspended = zero_suspended or (
         method == "capacity.general" and values["SusACal"] == 0)
@@ -432,6 +445,20 @@ def _resolve_sediment(selection, hydro, decisions):
         "reference-column volume weighting for layered beds. Input fraction units do not select this physics."))
     if s["bedforms"] != "off" and len({g["solid_density_kg_m3"] for g in s["grains"]}) != 1:
         incompatible("bedforms", "The selected FLOW bedform relation assumes equal solid densities across fractions")
+    if method == 'capacity.mpm_braids_5_055':
+        for key,wanted in [('transport','bedload'),('bedforms','off'),('banks','off'),('avalanche','off'),
+                ('bed_slope','bed_slope.off'),('shear','shear.total_roughness'),('suspension','off')]:
+            if s[key]!=wanted:
+                _fail(path+'.'+key,'BRAIDS standard MPM currently requires '+key+' = '+wanted+
+                    '. This combination needs separate coupled qualification.', 'integration_pending')
+        if bed['composition']!='bed.fully_mixed' or bed['coarse_layer'] or bed['sorting']!='sorting.off' or bed['transport_layer']!='off':
+            _fail(path+'.bed','BRAIDS standard MPM currently requires one finite fully mixed bed, without sorting or layer exchange.','integration_pending')
+        if hydro['secondary_flow']!='secondary.off' or hydro['turbulence']!='off':
+            _fail('hydrodynamics','BRAIDS standard MPM with advanced hydrodynamics is not yet coupled-qualified. Turn secondary flow and turbulence off.','integration_pending')
+        decisions.append(dict(path=path+'.capacity',requested=method,resolved=method,
+            reason='BRAIDS standard MPM-like5/.055/1.5, following the calibrated BASEMENT Saiedi reference. '
+                'Fixed coefficients, measured D50 and physical current cell-depth hydraulic resistance; no effective-velocity, extra form-drag or inferred sidewall correction. '
+                'The selected hydraulic roughness is retained. Matched103 is numerical/calibrated-case evidence, not universal physical validation.'))
     return s
 
 
@@ -470,7 +497,7 @@ def resolve_model(value) -> ResolvedModel:
     execution = request["execution"]
     _object(execution, ("backend", "integrator"), "execution")
     _choice(execution["backend"], ("cpu", "gpu"), "execution.backend")
-    _choice(execution["integrator"], (INTEGRATOR,), "execution.integrator")
+    _choice(execution["integrator"], (INTEGRATOR,HLLC_INTEGRATOR), "execution.integrator")
     hydro = request["hydrodynamics"]
     _object(hydro, ("roughness", "secondary_flow", "turbulence"), "hydrodynamics")
     from .river_jiang_cao import ROUGHNESS as JC_ROUGHNESS, METHOD as JC_METHOD
@@ -504,6 +531,9 @@ def resolve_model(value) -> ResolvedModel:
             _resolve_sediment(inactive, inactive_hydro, [])
         selected = None
     physics = {"hydrodynamics": hydro, "sediment": selected}
+    if execution['integrator'] == HLLC_INTEGRATOR:
+        from .hydraulics.bedload import validate_selection
+        validate_selection(selected, hydro)
     if selected is not None and 'bundle' in selected:
         bundle = selected['bundle']
         physics['hydrodynamics'] = dict(hydro, roughness=bundle['roughness'], secondary_flow=bundle['secondary'])

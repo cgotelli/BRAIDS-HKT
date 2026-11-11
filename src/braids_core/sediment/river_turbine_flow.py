@@ -115,16 +115,36 @@ class CoveredRotor:
         xp=self.xp;c=self.c;ids=self.ids;h=q[0,ids];row=self.plane;eta=q[0,row]+z[row]
         surface=eta+grad[4,row]*self.delta[0]+grad[5,row]*self.delta[1]
         bed=z[row]+grad[6,row]*self.delta[0]+grad[7,row]*self.delta[1]
-        margin=float(xp.min(xp.minimum(surface,eta)))-self.top
-        clearance=self.bottom-float(xp.max(xp.maximum(bed,z[row])))
+        u=xp.where(h>self.dry,q[1,ids]/xp.maximum(h,self.dry),0.);v=xp.where(h>self.dry,q[2,ids]/xp.maximum(h,self.dry),0.)
+        w=self.normalized[ids];un=u*self.normal[0]+v*self.normal[1]
+        if xp is np:
+            low=float(xp.min(xp.minimum(surface,eta)));high=float(xp.max(xp.maximum(bed,z[row])))
+            support_dry=bool(xp.any(h<=self.dry));u1=float(xp.sum(w*un));depth=float(xp.sum(w*h))
+        else:
+            # Preserve the five reductions, but transfer their scalar results
+            # together. No field is moved to CPU and no trial state is cached.
+            low,high,support_dry,u1,depth=xp.stack((xp.min(xp.minimum(surface,eta)),xp.max(xp.maximum(bed,z[row])),xp.any(h<=self.dry),xp.sum(w*un),xp.sum(w*h))).get().tolist()
+        s,scale,power=self._operating_state((low,high,support_dry,u1,depth))
+        coefficient=xp.zeros_like(h);F=work=0.
+        if s['active']:
+            coefficient=scale*w/self.area[ids];speed=xp.hypot(u,v)
+            force=xp.sum(coefficient*self.area[ids]*speed*un);removed=xp.sum(coefficient*self.area[ids]*speed*(u*u+v*v))
+            if xp is np:F=float(force);work=float(removed)
+            else:F,work=xp.stack((force,removed)).get().tolist()
+        return self._finish(s,F,work,power),coefficient,u,v
+
+    def _operating_state(self,stats,configuration=None):
+        """One scalar physical/controller policy shared by both samplers."""
+        c=self.c if configuration is None else configuration
+        low,high,support_dry,u1,depth=stats[:5]
+        margin=low-self.top;clearance=self.bottom-high
         reason='covered'
         if margin<self.tolerance:reason='insufficient_depth'
         elif clearance<self.tolerance:reason='bed_intersection'
         elif margin+self.tolerance<self.minimum_surface_clearance:reason='insufficient_surface_clearance'
         elif clearance+self.tolerance<self.minimum_bed_clearance:reason='insufficient_bed_clearance'
-        elif bool(xp.any(h<=self.dry)):reason='dry_numerical_support'
-        active=reason=='covered';u=xp.where(h>self.dry,q[1,ids]/xp.maximum(h,self.dry),0.);v=xp.where(h>self.dry,q[2,ids]/xp.maximum(h,self.dry),0.)
-        w=self.normalized[ids];un=u*self.normal[0]+v*self.normal[1];u1=float(xp.sum(w*un));depth=float(xp.sum(w*h));A=np.pi*c['D']**2/4
+        elif support_dry:reason='dry_numerical_support'
+        active=reason=='covered';A=np.pi*c['D']**2/4
         # This is a directed, zero-yaw rotor for every control mode. Previously
         # only the RPM resolver shut down at reversed/absent approach flow.
         if active and u1<=1e-10:
@@ -138,14 +158,13 @@ class CoveredRotor:
             point=operating_point(control,c['D'],depth,u1);active=point['active']
             if active:ct=point['ct'];cp=point['cp'];tsr=point['tip_speed_ratio']
             else:reason=point['reason']
-        coefficient=xp.zeros_like(h);u0=u1;F=P=work=0.
+        scale=0.;u0=u1;power=0.
         if active:
             beta=A*ct/(c['D']*depth)
             if not 0<=beta<1:raise ValueError('Covered rotor has invalid numerical blockage')
             alpha=.5*(1+math.sqrt(1-beta));u0=u1/alpha
-            coefficient=(.5*A*ct/alpha**2)*w/self.area[ids]
-            speed=xp.hypot(u,v);F=float(xp.sum(coefficient*self.area[ids]*speed*un));work=float(xp.sum(coefficient*self.area[ids]*speed*(u*u+v*v)))
-            P=F*.5*(1+math.sqrt(1-ct))*u0 if cp is None else .5*A*cp*abs(u0)**3
+            scale=.5*A*ct/alpha**2
+            power=None if cp is None else .5*A*cp*abs(u0)**3
             if control.get('mode')=='prescribed_tsr_table':rpm=tsr*abs(u0)/(c['D']/2)*30/math.pi
         diagnostic=dict(turbine_id=c['name'],active=active,inactive_reason=None if active else reason,
             control_mode=control.get('mode','constant_ct'),tip_speed_ratio=tsr,rotational_speed_rpm=rpm if active else (0. if rpm is not None else None),
@@ -156,8 +175,14 @@ class CoveredRotor:
             surface_clearance_reserve_m=margin-self.minimum_surface_clearance,bed_clearance_reserve_m=clearance-self.minimum_bed_clearance,
             local_velocity_m_s=u1,upstream_velocity_m_s=u0,mean_depth_m=depth,requested_Ct=c['ct'],requested_Cp=c['cp'],
             thrust_coefficient=ct if active else 0.,power_coefficient=cp if active else 0.,
-            force_per_density_m4_s2=F,useful_power_per_density_m5_s3=P,hydraulic_power_removed_per_density_m5_s3=work)
-        return diagnostic,coefficient,u,v
+            force_per_density_m4_s2=0.,useful_power_per_density_m5_s3=0.,hydraulic_power_removed_per_density_m5_s3=0.)
+        return diagnostic,scale,power
+
+    @staticmethod
+    def _finish(s,F,work,power):
+        P=F*.5*(1+math.sqrt(1-s['thrust_coefficient']))*s['upstream_velocity_m_s'] if power is None else power
+        s.update(force_per_density_m4_s2=F,useful_power_per_density_m5_s3=P,hydraulic_power_removed_per_density_m5_s3=work)
+        return s
 
     def apply(self,q,z,grad,rate):
         s,k,u,v=self.sample(q,z,grad);speed=self.xp.hypot(u,v)
@@ -169,21 +194,31 @@ class RotorArray:
     def __init__(self,cells,rows,backend):
         geometry=polygon.GeometryIndex(cells)
         self.rotors=tuple(CoveredRotor(cells,c,backend,geometry=geometry) for c in rows)
+        self._batch=None
+        if backend=='gpu':
+            from .river_turbine_sampling import RotorSampling
+            self._batch=RotorSampling(self.rotors)
         self.identity=dict(method='hkt.covered_rotor_array_v1',rotors=[r.identity for r in self.rotors],
             coupling='simultaneous source superposition on the same hydraulic state; ambient stress and pressure correction applied once')
+        if self._batch is not None:self.identity['sampling']=self._batch.identity
 
     def apply(self,q,z,grad,rate):
+        if self._batch is not None:
+            samples=self._batch.sample(q,z,grad);self._batch.apply(samples,rate)
+            return [s[0] for s in samples]
         return [d for rotor in self.rotors for d in rotor.apply(q,z,grad,rate)]
 
-    def sample(self,q,z,grad):return [r.sample(q,z,grad)[0] for r in self.rotors]
+    def sample(self,q,z,grad):
+        if self._batch is not None:return [s[0] for s in self._batch.sample(q,z,grad)]
+        return [r.sample(q,z,grad)[0] for r in self.rotors]
 
 
 def install(a,cells,rows,root):
     p=a.physics;xp=a.xp;g=p.g;root=Path(root);root.mkdir(parents=True,exist_ok=True)
-    if a.time or a.steps or p._open or a.morphology:raise ValueError('Fresh hydraulic owner required')
+    if a.time or a.steps or p._open:raise ValueError('Fresh accepted-state owner required')
     if not rows or len({r['nu'] for r in rows})!=1:raise ValueError('A turbine array requires one explicitly shared ambient viscosity.')
-    from .river_turbine_inflow import make_array_class
-    source_class=make_array_class(RotorArray) if any(r['control'].get('mode')=='fixed_rpm_surface' for r in rows) else RotorArray
+    from .river_turbine_thetis import ThetisArray
+    source_class=ThetisArray
     e=Engine(a.backend,p.flow.threads);stress=FullStressEngine(a.backend,p.flow.threads);source=source_class(cells,rows,a.backend);a.turbine_source=source
     grad=xp.zeros((10,p.n));raw=xp.zeros((3,p.n));trace=xp.zeros((10,p.nf));face=xp.zeros((2,p.nf));work=xp.zeros((3,p.n));status=xp.zeros(p.nf,dtype=xp.int32);ones=xp.ones(p.n);nu=xp.full(p.n,rows[0]['nu'])
     if a.backend=='cpu':getter=a.hydraulics.lib.hkt_get_surface_trace;getter.argtypes=[ctypes.c_void_p];getter.restype=None
@@ -194,7 +229,8 @@ def install(a,cells,rows,root):
         work.fill(0.);p.flow.launch('flow_momentum_gather',p.n,p.n,p.nf,ones,face,g['offset'],g['faces'],g['signs'],g['length'],g['area'],work);rate[1:]+=work[1:]
     def add(self,q,water,rate):
         previous(q,water,rate);gradients(q,self.z0)
-        stress.launch('hkt_full_strain_faces',p.nf,p.nf,p.n,float(p.parameters.dry),q,self.z0,grad,nu,g['owner'],g['neighbour'],g['normal'],g['distance'],g['xy'],face);gather(rate)
+        if rows[0]['nu']>0.:
+            stress.launch('hkt_full_strain_faces',p.nf,p.nf,p.n,float(p.parameters.dry),q,self.z0,grad,nu,g['owner'],g['neighbour'],g['normal'],g['distance'],g['xy'],face);gather(rate)
         raw.fill(0.);self.turbine_diagnostics=source.apply(q,self.z0,grad,raw);rate[1:]+=raw[1:]
         if a.backend=='cpu':getter(trace.ctypes.data)
         else:
@@ -203,10 +239,14 @@ def install(a,cells,rows,root):
     p.add_momentum=MethodType(add,p)
     def diagnose():gradients(a.q,a.z);return source.sample(a.q,a.z,grad)
     a.hkt_diagnose=diagnose;a.hkt_gradient=grad;a.hkt_status=status
+    a.hkt_low_speed_turbines=lambda:source.low_speed(a.q,a.z,grad,lambda:gradients(a.q,a.z))
     identity=dict(method='hkt.common_bed_surface_perturbation_hkt3l_v1',source=source.identity,engine=e.identity,stress=stress.identity,
-        nu_m2_s=rows[0]['nu'],scope='zero-yaw rotor array, fixed individual orientations; dry regions and nonflat fixed bed; no sediment',
+        nu_m2_s=rows[0]['nu'],scope=('fixed-axis rotor-normal loading and optional stock flow-directed rotors; dry regions and nonflat fixed bed; no sediment' if any(r.get('orientation',{}).get('mode')=='fixed_axis' for r in rows) else 'zero-yaw rotor array, fixed individual orientations; dry regions and nonflat fixed bed; no sediment'),
         balance='correction vanishes at constant free surface and zero flow/source; original augmented f-wave bed balance retained',
         shore='wet-only LS gradients; no viscosity across dry faces; pressure correction zero outside wet/common-depth small-surface-jump scope',
         base='same augmented f-wave, mass/advective flux, within-cell bed quadrature and SSPRK22 on every face',wrapper=digest(__file__),desktop_admission='hkt4_hydrodynamics_only')
+    if a.morphology:
+        identity['scope']='ordinary sediment owner retained; fixed hub elevation; evolving bed and clearance'
+        identity['desktop_admission']='hkt_ordinary_sediment_composition_v1'
     a.identity['hkt_terrain']=identity;p.identity['hkt_terrain']=identity
     return a

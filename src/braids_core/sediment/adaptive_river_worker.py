@@ -21,6 +21,7 @@ from .current_river_solver import CurrentRiverControls
 from .current_river_worker import _member
 from .river_field_policy import AutomaticRiver,FixedRiver,FieldSettings
 from .river_sediment_clock import next_hint
+from .sediment_trial_prediction import retry_scale
 from .river_leaf_controller import RiverLeafController
 from .river_leaf_io import PreparedLeafCache,MeshEpochWriter,sha
 
@@ -117,7 +118,7 @@ def hierarchy(p,stop=None):
     return build_breakline_hierarchy(domain,assignments,grid,p.get('breaklines',[]),levels=p['levels'],
         local_refinement=p.get('local_refinement',()),
         obstacles=validate_solids(p.get('solids',[]),domain),
-        cancelled=lambda:stop is not None and filesystem_path(stop).exists())
+        cancelled=lambda:stop is not None and filesystem_path(stop).exists(),threads=p['controls']['threads'])
 
 
 def arrays_valid(a,t,m):
@@ -137,14 +138,21 @@ def restrict(t,v):return np.moveaxis(t.restrict(np.moveaxis(v,-1,0)),0,-1)
 
 
 def initial_leaves(p,initial,t,required=()):
-    """Depth-only dynamic or terrain-only static, with physical geometry pins."""
+    """Dynamic depth, static terrain or static manual with physical geometry pins."""
     fine=tuple(range(t.offsets[-2],t.count))
     settings=FieldSettings(**p['adaptation'])
+    if t.levels==1:
+        # Wet halos and terrain requests cannot create a second level. Keep
+        # protection/request validation, but do not scan the same face graph
+        # to derive a partition that has no alternative.
+        from .river_field_policy import refinement_leaves
+        return refinement_leaves(t,np.zeros(t.count,dtype=int),settings,required)
     wanted=np.zeros(t.count,dtype=int)
     if p['adaptive']:
         active=initial['q'][0]>0
-        for f in t.finest.faces:
-            if f.neighbour<0 and f.kind!='wall':active[f.owner]=True
+        if settings.open_boundary_enabled:
+            for f in t.finest.faces:
+                if f.neighbour<0 and f.kind!='wall':active[f.owner]=True
         for _ in range(settings.buffer_cells):
             expanded=active.copy()
             for f in t.finest.faces:
@@ -188,9 +196,11 @@ def cache_for(root,p,a,t,stop=None,progress=lambda phase:None,*,initial_leaf_sta
     from .river_runtime_cache import prepare_shared
     c,m=validate_profile(p);ng=len(m.fraction_ids)
     # Restrict layer volumes, NOT fractions independently from their stock.
-    r={k:restrict(t,v) for k,v in a.items() if k!='fractions'}
-    r['fraction_volume']=restrict(t,a['fractions']*a['thickness'][:,None,:])
-    r['suspended']=restrict(t,a['concentration']*a['q'][0])
+    fields={k:v for k,v in a.items() if k!='fractions'}
+    fields['fraction_volume']=a['fractions']*a['thickness'][:,None,:]
+    fields['suspended']=a['concentration']*a['q'][0]
+    restricted=t.restrict_many(tuple(np.moveaxis(v,-1,0) for v in fields.values()))
+    r={k:np.moveaxis(v,0,-1) for k,v in zip(fields,restricted)}
     def prepare(folder,leaves,mesh):
         check_stop(stop);progress('mesh_preparation');ids=list(leaves);q=r['q'][:,ids];th=r['thickness'][:,ids];rock=r['rock'][ids]
         frac=np.divide(r['fraction_volume'][:,:,ids],th[:,None,:],out=np.full((len(th),ng,len(ids)),1./ng),where=th[:,None,:]>0);z=rock+th.sum(0)
@@ -295,6 +305,8 @@ def factory(backend,p,t,cache,work,stop=None,*,resolved_model=None,process_param
                                   or any(r!=1590 for r in m.dry_density_kg_m3)):
         raise ValueError('Explicit resolved capacity/material binding required for nonstandard material')
     turbines=None if process_parameters is None else process_parameters.get('turbines')
+    from braids_core.river_model import HLLC_INTEGRATOR
+    hllc=resolved_model is not None and resolved_model['request']['execution']['integrator']==HLLC_INTEGRATOR
     def make(leaves,mesh):
         check_stop(stop);inp=cache.get(leaves,mesh);count[0]+=1;folder=filesystem_path(work)/f'owner_{count[0]:04d}'
         d,f=cache.load_payload(inp)
@@ -302,7 +314,7 @@ def factory(backend,p,t,cache,work,stop=None,*,resolved_model=None,process_param
         if backend=='cpu':transport.verify_sources(sources)
         ctx=nullcontext(None) if backend=='cpu' else transport.constructors(sources,d,integrator='ssp33')
         from . import river_turbine_flow as turbine_flow
-        with (turbine_flow.native_context(backend) if turbines else nullcontext()),ctx as Solver:
+        with (turbine_flow.native_context(backend) if turbines and not hllc else nullcontext()),ctx as Solver:
             a=build_transport_river(inp/'case.data',d,backend=backend,controls=c,bedbc=f['bedbc'],feed=np.zeros(d['nf']),
                 work_directory=folder,gpu_solver_type=Solver,source_folder=sources if backend=='gpu' else None)
         a=RiverPolygonBankSolver(a,m,f['thickness'],f['fractions'],f['feed'],polygons=[cell.vertices_xy for cell in mesh.cells],**p['bank'])
@@ -321,7 +333,7 @@ def factory(backend,p,t,cache,work,stop=None,*,resolved_model=None,process_param
         install_suspension(a,folder,initial_concentration=f['concentration'],boundary_concentration=f['boundary_concentration'],
             enabled=suspension_on,capacity=None if selected is None else selected['capacity'],
             hiding='none' if selected is None else selected['capacity_hiding'].removeprefix('hiding.'),
-            corrections=None if selected is None else (selected,process_parameters),
+            corrections=None if selected is None else (selected,process_parameters),espir=c.espir if selected is not None else 1.,
             **p['suspension'])
         if resolved_model is not None:
             from .river_roughness import install as install_roughness
@@ -360,14 +372,25 @@ def factory(backend,p,t,cache,work,stop=None,*,resolved_model=None,process_param
             if getattr(a,'_physical_toe_failure',None) is not None:
                 a._physical_toe_failure.identity['public_support']=True
         if turbines:
-            if selected is not None:raise ValueError('Turbines require hydrodynamics only')
-            a.morphology=False
-            turbine_flow.install(a,mesh.cells,turbines['rotors'],folder/'turbine')
+            # Preserve the selected finite-stock sediment owner and its bed update.
+            a.morphology=selected is not None
+            if hllc:
+                from braids_core.hydraulics.river_turbines import install as install_hllc_turbines
+                install_hllc_turbines(a,mesh.cells,turbines['rotors'],folder/'turbine')
+            else:turbine_flow.install(a,mesh.cells,turbines['rotors'],folder/'turbine')
             a._survey_required_leaves=tuple(sorted(set(getattr(a,'_survey_required_leaves',()))|set(turbines['required_leaves'])))
+        from braids_core.river_model import HLLC_INTEGRATOR
+        if resolved_model is not None and resolved_model['request']['execution']['integrator']==HLLC_INTEGRATOR:
+            from braids_core.hydraulics.river_hllc import install as install_hllc
+            install_hllc(a,mesh,c.cfl)
+        if selected is not None:
+            from .bed_wave_jump import install as install_bed_wave_jump
+            install_bed_wave_jump(a)
         a.cancelled=lambda:stop is not None and filesystem_path(stop).exists()
+        a._open_boundary_refinement=FieldSettings(**p['adaptation']).open_boundary_enabled
         from braids_gpu.graded_native_exporter import EXPORTER_SHA256
         a.identity['adaptive_worker']=dict(schema=SCHEMA,worker_sha256=sha(__file__),runtime_cache_sha256=sha(Path(__file__).with_name('river_runtime_cache.py')),profile=p,fields_sha256=sha(inp/'fields.npz'),
-            scope='explicit_fwave_common_clock',QGIS_admitted=False,
+            scope='explicit_hllc_common_clock' if a.identity['integrator']==HLLC_INTEGRATOR else 'explicit_fwave_common_clock',QGIS_admitted=False,
             carrier_role='zero_time_geometry_and_spatial_inputs',
             carrier_cfl=float(d['cfl_target']),executed_face_sum_cfl=c.cfl,
             native_exporter_sha256=EXPORTER_SHA256,
@@ -393,9 +416,18 @@ def fields(a):
     d=a.data;o=np.asarray(d['owner']);j=np.asarray(d['neighbour']);normal=host(p.g['normal']);length=host(p.g['length']);n=p.n
     owners=np.r_[o,j[j>=0]];nx=np.r_[normal[0],normal[0,j>=0]];ny=np.r_[normal[1],normal[1,j>=0]];w=np.r_[length,length[j>=0]]
     xx=np.bincount(owners,w*nx*nx,minlength=n);xy=np.bincount(owners,w*nx*ny,minlength=n);yy=np.bincount(owners,w*ny*ny,minlength=n)
+    det=xx*yy-xy*xy
+    def cell_vector(face_flux):
+        f=np.r_[face_flux,face_flux[j>=0]]
+        bx=np.bincount(owners,w*nx*f,minlength=n);by=np.bincount(owners,w*ny*f,minlength=n)
+        return np.vstack((np.divide(yy*bx-xy*by,det,out=np.zeros(n),where=det>0),
+                          np.divide(xx*by-xy*bx,det,out=np.zeros(n),where=det>0)))
     dt=float(getattr(p,'_dt',0.));flux=host(p.class_face_integral).sum(0)/(dt*p.morfac) if dt>0 and a.morphology else np.zeros(p.nf)
-    f=np.r_[flux,flux[j>=0]];bx=np.bincount(owners,w*nx*f,minlength=n);by=np.bincount(owners,w*ny*f,minlength=n);det=xx*yy-xy*xy
-    result['bedload_vector_m2_s']=np.vstack((np.divide(yy*bx-xy*by,det,out=np.zeros(n),where=det>0),np.divide(xx*by-xy*bx,det,out=np.zeros(n),where=det>0)))
+    result['bedload_vector_m2_s']=cell_vector(flux)
+    if hasattr(p,'class_capacity'):
+        # Formula capacity is deliberately independent of the finite stock
+        # limiter used for the actual Exner face transport above.
+        result['bedload_capacity_m2_s']=np.linalg.norm(cell_vector(host(p.class_capacity).sum(0)),axis=0)
     result['bedload_sample_dt_s']=np.array(dt)
     result.update(time=a.time,steps=a.steps,basal_ledger=a.columns.basal.copy());return result
 
@@ -514,9 +546,17 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
             on_checkpoint_state(path,row,controller.owner,controller._mesh_cache[controller.leaves])
         if on_checkpoint is not None:on_checkpoint(path,row)
     checkpoints=AcceptedCheckpointClock(checkpoint_interval_s,checkpoint_file,checkpoint_notice)
+    def observe_turbine_cut_in():
+        # Diagnose accepted endpoints only, never a rejected RK/outer trial.
+        # Stop sampling once the warning is recorded; carry it through restart.
+        if getattr(driver,'turbine_low_speed_warning',None) is not None:return
+        owner=driver.controller.owner
+        if not hasattr(owner,'hkt_low_speed_turbines'):return
+        stopped=owner.hkt_low_speed_turbines()
+        if stopped:driver.turbine_low_speed_warning=dict(first_time_s=owner.time,turbine_ids=stopped)
     now=[0.];end=[1.]
     hydraulic=dict(accepted_substeps=0,internal_retries=0,accuracy_retries=0,nonlinear_retries=0,cfl_retries=0,spatial_retries=0,accepted_cfl_max=0.,
-        fwave_evaluations=0,minimum_substep_s=None,next_substep_hint_s=None,maximum_temporal_error_ratio=0.)
+        fwave_evaluations=0,hllc_evaluations=0,minimum_substep_s=None,next_substep_hint_s=None,maximum_temporal_error_ratio=0.)
     def progress(phase):write_json_atomic(output/'PROGRESS.json',dict(status='running',phase=phase,backend=backend,time_s=now[0],
         hydraulic=dict(hydraulic),
         percent=5 if phase=='loading' else 15 if phase=='initial_owner' else min(100,20+80*now[0]/end[0])))
@@ -525,6 +565,12 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
         a=driver.controller.owner
         if a.steps!=laststep:
             saved=fields(a);saved['initial_bed_m']=reference[list(driver.controller.leaves)].copy()
+            from braids_core.river_project import select_output_fields
+            # The public adaptive worker receives resolved physical methods,
+            # not the Desktop project document.  Reporting is an explicit
+            # non-physical process parameter so it cannot affect preparation,
+            # stepping or checkpoint state.
+            saved=select_output_fields(saved,{'output_fields':(process_parameters or {}).get('output_fields')})
             writer.write(driver.controller,saved);laststep=a.steps
             row=dict(time_s=a.time,steps=a.steps,cells=len(driver.controller.leaves),**diagnostics(a,initial_water));rows.append(row)
             write_json_atomic(output/'DIAGNOSTICS.json',rows)
@@ -540,7 +586,8 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
                     previous.append(turbine)
                 publish.turbine_rows=previous
                 write_json_atomic(output/'TURBINE_PERFORMANCE.json',previous)
-                stream=io.StringIO(newline='');csvwriter=csv.DictWriter(stream,fieldnames=list(turbine));csvwriter.writeheader();csvwriter.writerows(previous)
+                columns=list(dict.fromkeys(key for row in previous for key in row))
+                stream=io.StringIO(newline='');csvwriter=csv.DictWriter(stream,fieldnames=columns);csvwriter.writeheader();csvwriter.writerows(previous)
                 write_bytes_atomic(output/'TURBINE_PERFORMANCE.csv',stream.getvalue().encode('utf-8'))
                 write_json_atomic(output/'TURBINE_PERFORMANCE_INDEX.json',dict(schema='braids.turbine-performance.v1',rows=len(previous),
                     files={name:sha(output/name) for name in ['TURBINE_PERFORMANCE.json','TURBINE_PERFORMANCE.csv']}))
@@ -593,6 +640,7 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
         a=driver.controller.owner;now[0]=a.time
         if target<=a.time:raise ValueError('Restart target must advance time')
         initial_water=float(np.sum(initial['q'][0]*np.array([c.area_m2 for c in t.finest.cells])))
+        observe_turbine_cut_in()
         writer=MeshEpochWriter(output/'frames');checkpoints.ensure(driver,force=True);publish();interval=p['output_interval_s']
         nextout=(np.floor((a.time+output_clock_tolerance(a.time))/interval)+1)*interval
         while driver.controller.owner.time<target-output_clock_tolerance(target):
@@ -629,6 +677,7 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
                     hydraulic['accepted_cfl_max']=max(hydraulic['accepted_cfl_max'],d.get('accepted_cfl_max',0.))
                     hydraulic['maximum_temporal_error_ratio']=max(hydraulic['maximum_temporal_error_ratio'],d.get('temporal_error_ratio_max',0.))
                     hydraulic['fwave_evaluations']+=d.get('fwave_evaluations',0)
+                    hydraulic['hllc_evaluations']+=d.get('hllc_evaluations',0)
                     value=d.get('hydraulic_minimum_dt',dt)
                     old=hydraulic['minimum_substep_s']
                     hydraulic['minimum_substep_s']=value if old is None else min(old,value)
@@ -637,8 +686,9 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
                 except BendTrialRejected as exc:
                     rejected.append(dict(time_s=a.time,dt_s=dt,reason=str(exc)))
                     if attempt==9:raise
-                    dt*=.5;check_stop(stop_file)
+                    dt*=retry_scale(exc);check_stop(stop_file)
             now[0]=a.time
+            observe_turbine_cut_in()
             if p['adaptive']:
                 if driver.next_time<=a.time+1e-12:checkpoints.invalidate()
                 driver.assess(make,cancelled=lambda:stop_file is not None and filesystem_path(stop_file).exists())
@@ -658,14 +708,17 @@ def run(prepared,output,*,backend,restart=None,until=None,stop_file=None,on_fram
         write_json_atomic(output/'ADAPTATION.json',driver.events)
         write_json_atomic(output/'CACHE.json',cache.records)
     summary=dict(status=status,error=error,backend=backend,time_s=now[0],wall_s=time.perf_counter()-began,
+        turbine_low_speed_warning=getattr(driver,'turbine_low_speed_warning',None),
         hydraulic=hydraulic,
         sediment_next_step_hint_s=driver.sediment_step_hint if driver else None,
         checkpoint_interval_s=checkpoints.interval,checkpoints=checkpoints.rows,
         accepted_steps=driver.controller.owner.steps if driver else 0,rejected_trials=rejected,
         integrator=driver.controller.owner.solver.identity['integrator'] if driver else None,
-        scope='explicit_fwave_common_clock',QGIS_admitted=False)
+        scope='explicit_hllc_common_clock' if driver and driver.controller.owner.solver.identity['integrator']=='explicit_hllc_muscl_hancock_river_v1' else 'explicit_fwave_common_clock',QGIS_admitted=False)
     write_json_atomic(output/'STATUS.json',summary);write_json_atomic(output/'PROGRESS.json',dict(summary,phase=status,percent=100 if status=='complete' else 20+80*now[0]/end[0]))
     if status=='failed':raise RuntimeError(error)
+    if status=='complete' and summary['turbine_low_speed_warning'] is not None:
+        print('WARNING: Turbine inflow was too low during this simulation. Affected rotors stopped with zero power and restarted only when the speed was sufficient.',flush=True)
     return summary
 
 

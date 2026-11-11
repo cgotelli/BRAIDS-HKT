@@ -9,7 +9,7 @@ after silently substituting standard coefficients.
 Names and defaults follow the locked ``rdtrafrm.f90`` reference.  Obsolete
 compatibility fields are retained in the schema but can be marked inert by a
 current-only implementation.  Numerical kernels still perform their own
-state-dependent physical braids_support.
+state-dependent physical validation.
 """
 from __future__ import annotations
 
@@ -69,6 +69,7 @@ _MPM_PARAMETERS = (_p("ACal"),)
 
 
 _CONTRACTS = (
+    _f("capacity.mpm_braids_5_055", None, None, "scalar_split", True, False),
     # A coupled research bundle, never an equilibrium Exner/native alias.
     _f("capacity.mpm_jc2026_p15_reconstruction_v1", None, None, "mobile_bedload_bundle", False, False,
        _p("VicMol", minimum=0., minimum_inclusive=False),

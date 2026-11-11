@@ -28,6 +28,7 @@ class CurrentRiverControls:
     temporal_depth_atol: float = 4e-4
     temporal_momentum_atol: float = 4e-3
     temporal_rtol: float = 4e-3
+    espir: float = 1.
 
     def validate(self):
         values = asdict(self)
@@ -35,7 +36,7 @@ class CurrentRiverControls:
             raise ValueError('Current river controls must be finite')
         if (self.chezy < 1.e-6 or self.diameter <= 0 or self.morfac <= 0
                 or not 0 <= self.betac <= 1
-                or min(self.viscosity, self.diffusivity) < 0
+                or isinstance(self.espir, (bool, np.bool_)) or min(self.viscosity, self.diffusivity, self.espir) < 0
                 or isinstance(self.threads, bool) or int(self.threads) != self.threads
                 or self.threads < 1
                 or isinstance(self.cfl, bool) or not 0 < self.cfl <= 1.
@@ -129,7 +130,7 @@ def create_current_river_solver(deck, data, *, backend, controls, bedbc, feed,
     physics = Flow2DHCurrentBed(data, backend=backend,
         chezy=controls.chezy, diameter=controls.diameter,
         bedbc=bedbc, feed=feed, morfac=controls.morfac, betac=controls.betac,
-        viscosity=controls.viscosity, diffusivity=controls.diffusivity,
+        viscosity=controls.viscosity, diffusivity=controls.diffusivity, espir=controls.espir,
         threads=int(controls.threads))
     bind(solver, owner, physics, backend)
     install(solver, owner, backend, Path(deck), data, gpu_source_folder)

@@ -33,6 +33,11 @@ class RiverExplicit(RiverMidpoint):
         from .river_secondary_clock import SecondaryClock
         self.secondary = SecondaryClock(solver, self.cfl)
         p._secondary_clock = self.secondary
+        exterior=getattr(solver,'exterior_bed',None)
+        self.explicit_boundary_budget=None
+        if exterior is not None:
+            from .river_explicit_boundary_budget import ExplicitBoundaryBudget
+            self.explicit_boundary_budget=ExplicitBoundaryBudget(exterior)
         self.identity = dict(method=METHOD, controller_sha256=digest(__file__), cfl=self.cfl,
             cfl_kernel=self.cfl_engine.identity,
             shared_spatial_source=digest(Path(__file__).with_name('river_midpoint.py')),
@@ -46,6 +51,14 @@ class RiverExplicit(RiverMidpoint):
                 regrid='carry accepted scalar hint only under identical explicit controller identity; recheck every new-mesh stage'),
             explicit_fallback=False)
         self.identity['secondary_transport'] = self.secondary.identity
+        self.identity['boundary_budget']=None if self.explicit_boundary_budget is None else self.explicit_boundary_budget.identity
+
+    def bind_boundary_budget(self, exterior):
+        # Public exterior owners are installed after the explicit controller.
+        from .river_explicit_boundary_budget import ExplicitBoundaryBudget
+        if self.explicit_boundary_budget is not None:raise ValueError('Explicit boundary budget already bound')
+        self.explicit_boundary_budget=ExplicitBoundaryBudget(exterior)
+        self.identity['boundary_budget']=self.explicit_boundary_budget.identity
 
     def rate(self, q, dt, time):
         a = self.solver; p = a.physics; g = p.g; xp = self.xp

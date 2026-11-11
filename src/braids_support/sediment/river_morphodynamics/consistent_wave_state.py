@@ -62,6 +62,9 @@ def install(a,folder,*,pressure_only=False):
         batch=getattr(p,'_river_hydraulic_batch',None)
         if batch is None or not batch['traces']:
             update();p.hydraulic_wave_calls+=1
+            continuation=getattr(p,'open_bed_trace',None)
+            if continuation is not None and not pressure_only:
+                continuation.apply(p.z0,p.grad,p.hydraulic_wave_trace)
             if batch is not None:batch['traces']=True
         values=list(args)
         if pressure_only:values.append(p.hydraulic_wave_trace)

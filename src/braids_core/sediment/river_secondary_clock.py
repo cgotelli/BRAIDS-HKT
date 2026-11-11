@@ -7,6 +7,7 @@ never change the user backend, physics, output clock or outer sediment clock.
 """
 from pathlib import Path
 import numpy as np
+from . import secondary_vector_ops as vectors
 from .bend_methods_v1 import BendTrialRejected, digest
 from braids_support.sediment.river_morphodynamics.sediment_wave import WaveEngine
 
@@ -101,18 +102,18 @@ class SecondaryClock:
         old=p.secondary_pending;new=old.copy();flux=xp.zeros(p.nf);source=xp.zeros(n)
         removed=0.;elapsed=0.;steps=0;peak=0.;minimum=dt;hint=dt
         r0=(q1-q0)/dt;r1=(2.*q2-q0-q1)/dt
-        def state(f):return q0+dt*((f-.5*f*f)*r0+.5*f*f*r1)
+        def state(f):return vectors.state(xp,q0,r0,r1,dt,f)
         while elapsed<dt-1e-14*dt:
             self.solver.check()
-            f=elapsed/dt;start=state(f);wa=(1.-f)*w0+f*w1
+            f=elapsed/dt;start=state(f);wa=vectors.blend(xp,w0,w1,f)
             frequency=self.frequency(start,wa)
             delta=min(hint,dt-elapsed,.98*self.cfl/frequency if frequency>0 else dt)
             for retry in range(40):
                 end_fraction=(elapsed+delta)/dt
                 end=state(end_fraction)
                 # Matching Euler depth preserves uniform intensity exactly.
-                stage=start+delta*((1.-f)*r0+f*r1)
-                wb=(1.-end_fraction)*w0+end_fraction*w1
+                stage=vectors.stage(xp,start,r0,r1,delta,f)
+                wb=vectors.blend(xp,w0,w1,end_fraction)
                 frequency=max(frequency,self.frequency(stage,wb))
                 valid=(np.isfinite(frequency) and delta*frequency<=self.cfl*(1+1e-12)
                        and not bool(xp.any(stage[0]<0)))
@@ -127,8 +128,7 @@ class SecondaryClock:
             self.scalar_faces(stage,p.work,wb);part+=.5*delta*p.scalarflux
             p.flow.launch('flow_scalar_gather',n,n,delta,new,p.scalarflux,
                 g['offset'],g['faces'],g['signs'],g['length'],g['area'],p.work2)
-            transported=.5*(p.work+p.work2)
-            new=(transported+delta*start[0]*p.outputs[3])/(1.+delta*p.outputs[4])
+            transported,new=vectors.update(xp,p.work,p.work2,start[0],p.outputs[3],p.outputs[4],delta)
             dry=end[0]<=p.parameters.dry
             removed+=float(xp.sum(xp.where(dry,new,0.)*g['area']))
             new[dry]=0.;source+=new-transported;flux+=part

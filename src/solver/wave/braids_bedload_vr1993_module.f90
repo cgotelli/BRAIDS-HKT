@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: GPL-3.0-only
 ! Derived from Delft3D bedtr1993 / bedbc1993, Stichting Deltares, 2011-2026.
-! Pinned source hashes and scope: braids_support/sediment/bedload_vr1993/.
+! Pinned source hashes and scope: validation/sediment/bedload_vr1993/.
 ! Current-only, horizontal-bed, single noncohesive fraction (fraction=1).
 ! Formula API only: no bed update, face limiter, calibration or porosity factor.
 module braids_bedload_vr1993_module

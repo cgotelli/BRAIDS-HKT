@@ -1,7 +1,7 @@
 # Standalone PySide6 port of the maintained BRAIDS configuration editor.
 """Per-boundary and per-fraction editors for the common river worker."""
 from PySide6.QtCore import Qt,Signal
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QFormLayout,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,QHBoxLayout,QPushButton
+from PySide6.QtWidgets import QWidget,QVBoxLayout,QFormLayout,QLabel,QTableWidget,QTableWidgetItem,QHeaderView,QHBoxLayout,QPushButton,QSizePolicy
 from braids_core.river_forcing import ForcingDraft
 from braids_core.river_schedule import ScheduleDraft,CONSTANT,LINEAR
 from braids_core.river_boundary import FEED_FIELDS,feed_field,FLOW_SOLID,FLOW_BULK,FLOW_MASS,FLOW_FREE,NATIVE,TOTAL,RATIO
@@ -17,38 +17,60 @@ class RiverForcingEditor(QWidget):
         self.draft=ForcingDraft();self.schedules=ScheduleDraft();self._busy=False;self._context=None;self._shown=None;self._grains=[]
         self._enabled=False;self._suspended=False;self._bedload=False
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0)
-        self.boundary_box,form=section(layout,'Sediment boundary forcing')
+        # This step contains only sediment boundary controls, so a second
+        # collapsible heading wastes vertical space and hides the only editor.
+        self.boundary_box=None;form=QFormLayout();layout.addLayout(form)
         self.boundary_form=form
         self.boundary=combo([])
         self.method=combo([('Capacity (selected bedload formula)',FLOW_FREE),('Total sediment (solid m³/s)',TOTAL),('Sediment / water ratio (qs/q)',RATIO)])
-        form.addRow('Inlet',self.boundary);form.addRow('Bedload supply',self.method)
+        form.addRow('Inlet',self.boundary);form.addRow('Bed load supply method',self.method)
         self.table=QTableWidget(0,4)
         self.table.setHorizontalHeaderLabels(['Fraction ID','Size (mm)','Inward feed\n(m²/s solid)','Incoming concentration\n(kg/m³)'])
-        self.table.setMinimumHeight(150);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
         self.table.horizontalHeader().setStretchLastSection(True);form.addRow(self.table)
         self.temporal=combo([('Constant values above',CONSTANT),('Linear time table below',LINEAR)])
         form.addRow('Time dependence',self.temporal)
-        self.series=QTableWidget(0,1);self.series.setMinimumHeight(150)
-        self.series.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        form.addRow(self.series)
-        self.series_buttons=QWidget();buttons=QHBoxLayout(self.series_buttons);buttons.setContentsMargins(0,0,0,0)
-        self.add_time=QPushButton('Add time row');self.remove_time=QPushButton('Remove selected row')
-        buttons.addWidget(self.add_time);buttons.addWidget(self.remove_time);form.addRow(self.series_buttons)
-        self.note=WrappedNote();form.addRow(self.note)
-        self.initial_box,form=section(layout,'Initial suspended sediment')
+        # Initial suspended mass belongs alongside inlet timing rather than
+        # below optional schedules and explanatory text.
+        self.initial_box,initial_form=section(layout,'Initial suspended sediment')
+        self.initial_box.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Maximum)
+        self.initial_box.content.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Maximum)
         self.initial=QTableWidget(0,3)
         self.initial.setHorizontalHeaderLabels(['Fraction ID','Size (mm)','Initial concentration (kg/m³)'])
-        self.initial.setMinimumHeight(130);self.initial.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.initial.horizontalHeader().setStretchLastSection(True);form.addRow(self.initial)
-        note=WrappedNote();note.setText('Uniform initial concentration in wet cells; dry cells start with zero suspended mass. '
+        self.initial.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.initial.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
+        self.initial.horizontalHeader().setStretchLastSection(True);initial_form.addRow(self.initial)
+        initial_note=WrappedNote();initial_note.setText('Uniform initial concentration in wet cells; dry cells start with zero suspended mass. '
             'Values follow fraction IDs, not row positions. Removed or renamed fractions and boundaries keep inactive drafts; '
             'they are never automatically reassigned.')
-        form.addRow(note)
+        initial_form.addRow(initial_note)
+        schedule_form=QFormLayout();layout.addLayout(schedule_form)
+        self.series=QTableWidget(0,1)
+        self.series.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.series.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
+        schedule_form.addRow(self.series)
+        self.series_buttons=QWidget();buttons=QHBoxLayout(self.series_buttons);buttons.setContentsMargins(0,0,0,0)
+        self.add_time=QPushButton('Add time row');self.remove_time=QPushButton('Remove selected row')
+        buttons.addWidget(self.add_time);buttons.addWidget(self.remove_time);schedule_form.addRow(self.series_buttons)
+        self.note=WrappedNote();schedule_form.addRow(self.note)
         self.boundary.currentIndexChanged.connect(self._choose)
         self.method.currentIndexChanged.connect(self._edit_method)
         self.table.itemChanged.connect(self._edit);self.initial.itemChanged.connect(self._edit)
         self.series.itemChanged.connect(self._edit);self.temporal.currentIndexChanged.connect(self._edit_temporal)
         self.add_time.clicked.connect(self._add_time);self.remove_time.clicked.connect(self._remove_time)
+        layout.addStretch()
+
+    @staticmethod
+    def _fit_table(table):
+        """Keep boundary tables no taller than their actual records."""
+        header=table.horizontalHeader().sizeHint().height()
+        rows=sum(max(32,table.rowHeight(row)) for row in range(table.rowCount()) if not table.isRowHidden(row))
+        table.setFixedHeight(max(header+2*table.frameWidth()+4,header+rows+2*table.frameWidth()+4))
+
+    def _fit_tables(self):
+        for table in (self.table,self.initial,self.series):self._fit_table(table)
+        self.initial_box.content.updateGeometry();self.initial_box.updateGeometry()
 
     def _remember(self):
         if self._shown is not None:
@@ -129,7 +151,7 @@ class RiverForcingEditor(QWidget):
             key=feed_field(self.method.currentData()) or 'solid_flux_m2_s'
             units={'solid_flux_m2_s':'m²/s solid','bulk_flux_m2_s':'m²/s bulk','mass_flux_kg_m_s':'kg/(m s)',
                    'solid_discharge_m3_s':'m³/s solid','solid_water_ratio':'m³ solid / m³ water'}[key]
-            self.table.horizontalHeaderItem(2).setText('Inward feed\n('+units+')')
+            self.table.horizontalHeaderItem(2).setText('Bed load sediment supply\nInward feed ('+units+')')
             scheduled=self.schedules.data['boundaries'].get(self._shown)
             self.series.setColumnCount(1+2*len(self._grains))
             self.series.setHorizontalHeaderLabels(['Time (s)']+[label for grain,_ in self._grains
@@ -151,12 +173,17 @@ class RiverForcingEditor(QWidget):
                         if c<2:item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                         table.setItem(r,c,item)
         finally:self._busy=busy
+        self._fit_tables()
         self._availability()
 
     def _availability(self):
         self.initial_box.setVisible(self._enabled and self._suspended)
+        self.boundary_form.labelForField(self.method).setText('Bed load supply method')
         self.table.horizontalHeaderItem(0).setText('Material')
         self.initial.horizontalHeaderItem(0).setText('Material')
+        # Each physical route identifies its own editable column; the table
+        # does not imply that bedload and suspension are one combined supply.
+        self.table.horizontalHeaderItem(3).setText('Suspended sediment supply\nIncoming concentration (kg/m³)')
         self.table.setColumnHidden(1,True)
         self.initial.setColumnHidden(1,True)
         self.table.setColumnHidden(2,not self._bedload or feed_field(self.method.currentData()) is None)
@@ -166,6 +193,7 @@ class RiverForcingEditor(QWidget):
         for col in range(2,self.series.columnCount(),2):self.series.setColumnHidden(col,not self._suspended)
         self.boundary.setEnabled(self._enabled and self.boundary.count()>0)
         self.method.setEnabled(self._enabled and self._bedload and self._shown is not None)
+        self.boundary_form.setRowVisible(self.method,self._bedload)
         scheduled=self.temporal.currentData()==LINEAR
         self.temporal.setEnabled(self._enabled and self._shown is not None)
         self.table.setEnabled(self._enabled and self._shown is not None and not scheduled)
@@ -198,13 +226,15 @@ class RiverForcingEditor(QWidget):
         elif self._suspended and not self._bedload:
             self.note.setText('Supply suspended concentration in kg/m³. No bedload is supplied or transported. Outlets export arriving suspension; reversal uses zero incoming concentration.')
         elif self.method.currentData()==FLOW_FREE:
-            self.note.setText('Supplies the selected bedload formula capacity. Suspended concentration is a separate measured input, not bedload capacity. Outlets export only.')
+            self.note.setText('')
         elif self.method.currentData()=='outflow':
             self.note.setText('Exports local bedload when water leaves. No sediment is supplied when water enters. Active after the sediment start time.')
         else:
             self.note.setText(('Total solid volume per second, distributed over incoming faces in proportion to their accepted water discharge. '
                 if self.method.currentData()==TOTAL else 'Solid-volume ratio qs/q, multiplied by local inward water discharge. ')+
                 'Zero gives clear-water inflow. No supply without incoming water. Time tables use physical seconds and must cover the end time; warm-up has no sediment feed.')
+        self.note.setVisible(bool(self.note.text()))
+        self._fit_tables()
 
     def values(self,ids,boundaries,*,sediment,suspended,bedload=True):
         self._remember()

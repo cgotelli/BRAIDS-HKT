@@ -31,3 +31,7 @@ def measurement_color():
 
 def snap_enabled():return settings().value('map/snap',True,type=bool)
 def adaptive_mesh():return settings().value('map/adaptive_mesh',True,type=bool)
+
+def smooth_level():
+    """Display-only smoothing strength, with bounded, persistent settings."""
+    return max(0,min(100,settings().value('map/smooth_level',50,type=int)))

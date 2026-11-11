@@ -163,7 +163,6 @@ class MapView(QGraphicsView):
             ("zoom_in", "+", "Zoom in", lambda: self.zoom(1.3)),
             ("zoom_out", "−", "Zoom out", lambda: self.zoom(1/1.3)),
             ("pan", "✥", "Pan map", lambda: self.set_tool("pan")),
-            ("select", "↖", "Select geometry", lambda: self.set_tool("select")),
             ("polygon", "⬠", "Draw release polygon · click vertices, double-click or Enter to finish", lambda: self.set_tool("polygon")),
             ("line", "╱", "Draw sketch line · click vertices, double-click or Enter to finish", lambda: self.set_tool("line")),
             ("edit", "✎", "Edit geometry · select a polygon or line, then drag its vertices", lambda: self.set_tool("edit")),
@@ -179,11 +178,11 @@ class MapView(QGraphicsView):
             button.setFixedSize(36, 36)
             button.setToolTip(tr(hint))
             button.setAccessibleName(tr(hint))
-            if key in ("pan", "select", "polygon", "line", "edit"):
+            if key in ("pan", "polygon", "line", "edit"):
                 button.setCheckable(True)
             button.clicked.connect(callback)
             self.tool_buttons[key] = button
-            (navigation if key in ("zoom_in", "zoom_out", "pan", "select") else geometry).addWidget(button)
+            (navigation if key in ("zoom_in", "zoom_out", "pan") else geometry).addWidget(button)
         self.style_button = QToolButton(self.navigation_controls)
         self.style_button.setText(tr("◐"))
         self.style_button.setObjectName("MapControl")
@@ -247,7 +246,10 @@ class MapView(QGraphicsView):
         return "Terrain" if key == "terrain" else ("Blue–red" if "displacement" in key.lower() else "Ocean to fire")
 
     def default_zero_transparent(self, key):
-        return key != "terrain"
+        # DEM sea-level/no-data collars are frequently encoded as exactly
+        # zero.  Terrain follows the same transparent-zero default as result
+        # fields; users may still override it in raster appearance settings.
+        return True
 
     def range_for(self, key):
         if key=='terrain' and self._terrain_range is not None:return self._terrain_range
@@ -282,7 +284,7 @@ class MapView(QGraphicsView):
             self.terrain_low,self.terrain_high=style.get('limits') or self.range_for('terrain')
             self.terrain_item.configure((self.terrain_low,self.terrain_high),
                 palette=style.get('palette',self.default_palette('terrain')),
-                zero_transparent=style.get('zero_transparent',False))
+                zero_transparent=style.get('zero_transparent',self.default_zero_transparent('terrain')))
             self.terrain_item.setOpacity(style.get('opacity',1.))
             if self.field_raster is not None:
                 self.set_field(self.field_raster, self.field_label, hide_rings=self.field_hide_rings)
@@ -521,7 +523,7 @@ class MapView(QGraphicsView):
             self.line_item = None
         self.setDragMode(QGraphicsView.ScrollHandDrag if tool == "pan" else QGraphicsView.NoDrag)
         self.setCursor(Qt.OpenHandCursor if tool == "pan" else Qt.CrossCursor)
-        for key in ("pan", "select", "polygon", "line", "edit"):
+        for key in ("pan", "polygon", "line", "edit"):
             self.tool_buttons[key].setChecked(key == tool)
         self.tool_changed.emit(tool)
         self._drawing_actions()
@@ -572,7 +574,7 @@ class MapView(QGraphicsView):
                 self.gauge_placed.emit(x, y)
             elif self.tool == "lake":
                 self.lake_seed.emit(x, y)
-            elif self.tool in ("edit", "select"):
+            elif self.tool == "edit":
                 self._select_or_drag(event.position().toPoint())
             elif self.tool in ("profile", "polygon", "line"):
                 if not self.points or self.points[-1] != [x, y]:

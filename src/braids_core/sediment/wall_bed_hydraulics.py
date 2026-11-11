@@ -13,12 +13,14 @@ import subprocess
 from . import bend_native_hydraulics as native
 from . import wall_velocity_bounds
 from . import directional_hydraulic_limiter as directional
+from . import hydraulic_rank
 from .bend_methods_v1 import ROOT,HERE,digest
 
 METHOD=directional.METHOD
 
 
 def native_source(code):
+    code=hydraulic_rank.native_source(code)
     needle='   do m=1,nprimitive\n    grad(m,:,c)=grad(m,:,c)*max(0.d0,theta(m))'
     count=code.count(needle)
     if count!=3:raise ValueError(f'Native reconstruction layout changed: {count}')
@@ -28,6 +30,7 @@ def native_source(code):
 
 
 def cuda_source(code):
+    code=hydraulic_rank.cuda_source(code)
     needle='            for(int m=0;m<4;++m) {gx[m]*=fmax(0.,theta[m]);gy[m]*=fmax(0.,theta[m]);}'
     if code.count(needle)!=1:raise ValueError('CUDA reconstruction layout changed')
     return directional.cuda_source(wall_velocity_bounds.cuda_source(code.replace(needle,(HERE/'wall_bed_reconstruction.cu.inc').read_text()+'\n'+needle)))
@@ -39,7 +42,7 @@ def build():
     parts=[ROOT/name for name in SOURCES]
     bridge=HERE/'bend_native_bridge.f90';tail=HERE/'bend_native_rates_tail.inc'
     probe=ROOT/'braids_support/sediment/struiksma_t2_2d/wall_reconstruction_probe.f90'
-    extras=[bridge,tail,probe,Path(__file__),HERE/'wall_bed_reconstruction.f90.inc',HERE/'wall_velocity_bounds.py']
+    extras=[bridge,tail,probe,Path(__file__),HERE/'wall_bed_reconstruction.f90.inc',HERE/'wall_velocity_bounds.py',HERE/'hydraulic_rank.py']
     extras += [HERE/('directional_hydraulic_limiter'+suffix) for suffix in ('.py','.f90.inc','.cu.inc')]
     hashes={str(p.relative_to(ROOT)):digest(p) for p in parts+extras}
     key=hashlib.sha256(json.dumps([METHOD,hashes,version],sort_keys=True).encode()).hexdigest()[:20]
@@ -97,7 +100,7 @@ def install(solver,owner,backend,deck,data,source_folder=None):
     module=cp.RawModule(code=code,options=OPTIONS,name_expressions=names)
     solver.reconstruction.module=module
     solver.reconstruction.kernels={name:module.get_function(name) for name in names}
-    identity=dict(method=METHOD,base_sha256=digest(source),generated_sha256=hashlib.sha256(code.encode()).hexdigest(),
+    identity=dict(method=METHOD,hydraulic_gradient=hydraulic_rank.METHOD,hydraulic_rank_sha256=digest(HERE/'hydraulic_rank.py'),base_sha256=digest(source),generated_sha256=hashlib.sha256(code.encode()).hexdigest(),
         wrapper_sha256=digest(__file__),kernel_sha256=digest(HERE/'wall_bed_reconstruction.cu.inc'),
         velocity_bounds_sha256=digest(HERE/'wall_velocity_bounds.py'),
         directional_wrapper_sha256=digest(HERE/'directional_hydraulic_limiter.py'),

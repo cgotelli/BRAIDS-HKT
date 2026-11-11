@@ -13,6 +13,7 @@ class DiameterContract:
 LABELS = dict(d30='D30 (30%)', d50='D50 (50%)', d84='D84 (84%)',
               d90='D90 (90%)', dm='Dm (mean)')
 REQUIRED = {
+    'capacity.mpm_braids_5_055': ('d50',),
     'capacity.van_rijn_1993': ('d50', 'd90'),
     'capacity.mpm': ('d50', 'd90'),
     'capacity.wong_parker_2006': ('dm',),
@@ -25,11 +26,12 @@ REQUIRED = {
     'capacity.mpm_jc2026_p15_reconstruction_v1': ('d50', 'd90'),
 }
 NOTES = {
+    'capacity.mpm_braids_5_055': 'Measured median D50 sets Shields stress and transport scale. Fixed BRAIDS5/.055/1.5 variant; no D90 or inferred grading/form-drag correction.',
     'capacity.van_rijn_1993': 'Measured bed D50 sets mobility and reference concentration; measured bed D90 sets current drag efficiency. Suspended Ds is supplied independently in the suspended setup.',
     'capacity.mpm': 'D50 sets Shields stress and transport scale; measured D90 sets the FLOW grain/form-drag correction.',
     'capacity.wong_parker_2006': 'Arithmetic mean Dm, not a percentile. Uniform-sediment plane-bed relation; no MPM form-drag correction.',
     'capacity.ashida_michiue_generalized': 'D50 sets Shields stress and transport scale.',
-    'capacity.wang_fredsoe': 'D50 sets particle size and threshold; measured D90 sets grain friction.',
+    'capacity.wang_fredsoe': 'D50 sets particle size and viscosity-dependent threshold; independently entered D90 is the grain-friction argument passed by the active FLOW caller. No percentile is inferred.',
     'capacity.smart_jaggi': 'Mean Dm sets the threshold; measured D30 and D90 set (D90/D30)^0.2. Dm is not a percentile.',
     'capacity.ancey_recking_2023': 'Bed-surface D50 sets Shields stress and dimensionless transport scale.',
     'capacity.recking_2010': 'Measured surface D84 sets Shields stress and transport scale. D84/D50 enters the threshold and low-transport branch (2010 Eq. 12).',

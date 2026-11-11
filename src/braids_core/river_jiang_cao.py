@@ -101,6 +101,8 @@ def validate_project(project):
     RoughnessParameters(mat,selection['capacity']['grain_sizes_m']['d90'])
     if p['morfac'] != 1:
         fail('morfac', 'Set morphological factor to 1; accelerated phase exchange is not qualified.')
+    if p['espir'] != 1.:
+        fail('hydrodynamics.espir', 'Set FLOW Espir to 1; the Jiang–Cao bundle owns its secondary-flow direction and does not use this coefficient.')
     if any(p[k] for k in ('betac','diffusivity','viscosity')):
         fail('hydrodynamics', 'Set FLOW Betac, secondary diffusion and eddy viscosity to 0. '
              'The selected finite-adjustment bundle supplies its own secondary feedback.')
@@ -142,6 +144,8 @@ def validate_project(project):
 def validate_binding(profile, resolved):
     """The seven-field worker, not the equilibrium Exner installer, owns this route."""
     s=resolved['physics']['sediment']; cols=profile['columns']
+    if profile['controls']['espir'] != 1.:
+        fail('hydrodynamics.espir', 'Set FLOW Espir to 1; Jiang–Cao owns its sediment direction.')
     g=s['grains'][0]
     if cols['bed']!='mixed' or len(cols['fraction_ids'])!=1 or cols['base_update']!=1:
         fail('bed', 'Use one fully mixed finite bed, with independent finite base.')

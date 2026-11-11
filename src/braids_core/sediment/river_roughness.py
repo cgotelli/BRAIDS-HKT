@@ -133,6 +133,9 @@ def install(a, folder, *, method, parameters, bedforms_enabled, spatial=None, zo
         knots, cdf = xp.asarray(knots), xp.asarray(cdf)
         p.bedform_grains = xp.zeros((2, p.n))
     previous_local, previous_launch = p.local, p.flow.launch
+    from .shoreline_solver import ShorelinePhysics
+    # Preserve third-party/subclass wrappers rather than bypassing their work.
+    share_safe = getattr(previous_local, '__func__', None) is ShorelinePhysics.local
 
     def prescribed(q):
         engine.launch("river_roughness_cells", p.n, p.n, mode, value, p.parameters.dry, q, p.prescribed_chezy)
@@ -165,24 +168,26 @@ def install(a, folder, *, method, parameters, bedforms_enabled, spatial=None, zo
             raise ValueError("Nonfinite or nonpositive selected roughness")
 
     def refresh(q, z):
-        safe, _ = p.safe(q)
+        safe, wet = p.safe(q)
         p._effective_physical_q = q
         try:
             effective(p, safe, z)
         finally:
             del p._effective_physical_q
+        return safe, wet
 
     def friction(owner, q, dt, *args):
         if bedforms_enabled and not p._open:
             predict(q)
             p.bedform_updates += 1
-        refresh(q, a.z if not p._open else p.z0)
-        safe, wet = p.safe(q)
+        safe, wet = refresh(q, a.z if not p._open else p.z0)
         engine.launch("flow_drag", p.n, p.n, float(dt), p.parameters.gravity, p.bedform_chezy, safe)
         q[1:] = xp.where(wet, safe[1:], 0.)
 
     def local(owner, q, z, olddepth, hi):
-        refresh(q, z)
+        safe, wet = refresh(q, z)
+        if share_safe:
+            return p.local_with_safe(z, olddepth, hi, safe, wet)
         return previous_local(q, z, olddepth, hi)
 
     def launch(name, count, *args):

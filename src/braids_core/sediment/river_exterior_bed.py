@@ -111,6 +111,14 @@ class ExteriorBed:
         if any(v['method']=='outlet.free_weir' for v in hydraulic_identity.values()):
             from .river_exterior_outlet import FreeWeir
             self.free_weir=FreeWeir(self,hydraulic_identity)
+        self.normal_outlet=None
+        if any(v['method']=='outlet.normal_depth' for v in hydraulic_identity.values()):
+            from .river_normal_outlet import NormalOutlet
+            self.normal_outlet=NormalOutlet(self,hydraulic_identity)
+        self.rating_outlet=None
+        if any(v['method']=='outlet.rating_curve' for v in hydraulic_identity.values()):
+            from .river_rating_outlet import RatingOutlet
+            self.rating_outlet=RatingOutlet(self,hydraulic_identity)
         # The inert geometry carrier's Manning coefficient is not the user's
         # selected law. Use the same resolved relation as hydraulic friction.
         self.roughness_mode=min(roughness_mode,3)
@@ -151,6 +159,7 @@ class ExteriorBed:
                 state='immutable inputs; accepted exterior used during the decoupled physical step'),
             prescribed_section='selected external reference water line; exact net Q from boundary Riemann fluxes with common virtual exterior velocity; actual backwater/sonic/shock trace resolved, incoming tangent zero and outgoing tangent advected',
             stage_policies={str(k):v for k,v in policies.items()},
+            stage_wave='outward_entropy_1wave_hugoniot_characteristic_v1; incoming finite bore admitted across supercritical outflow; sonic rarefaction sampling',
             incoming_stage_tangent='zero for explicitly permitted subcritical backflow',
             stage_inundation='backflow policy rejects a wet prescribed stage over a dry exterior trace; separate inundation binding pending',
             initial_sha256=hashlib.sha256(z.tobytes()).hexdigest(),
@@ -160,6 +169,8 @@ class ExteriorBed:
             scope='hydraulic exterior-state integration with physical-overlap AMR history; public admission pending',
             ownership='zero-area exterior state; no interior bed clamp or direct material source',
             outward='free increment at accepted local outward water flux',public_support=False)
+        if self.normal_outlet is not None:identity['normal_outlet_control']=self.normal_outlet.identity
+        if self.rating_outlet is not None:identity['rating_outlet_control']=self.rating_outlet.identity
         target.identity['exterior_bed']=identity
         schedule.bind(a)
         self.bed_schedule.bind(a,'exterior_bed')
@@ -202,6 +213,8 @@ class ExteriorBed:
         if self.inlet_compatibility is not None:self.inlet_compatibility.evaluate(q,z)
         if self.critical_outlet is not None:self.critical_outlet.evaluate(q,z)
         if self.free_weir is not None:self.free_weir.evaluate(q,z)
+        if self.normal_outlet is not None:self.normal_outlet.evaluate(q,z)
+        if self.rating_outlet is not None:self.rating_outlet.evaluate(q,z)
         if bool(self.xp.any(self.status)):raise BendTrialRejected('Exterior hydraulic boundary rejected')
         return self.flux
 

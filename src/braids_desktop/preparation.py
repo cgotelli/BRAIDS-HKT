@@ -14,7 +14,7 @@ import numpy as np
 from braids_core import river_worker as public
 from braids_core.sediment import adaptive_river_worker as worker
 from braids_core.sediment.river_leaf_io import sha,publish_directory
-from braids_gpu.atomic_output import write_json_atomic,save_arrays_atomic
+from braids_gpu.atomic_output import write_json_atomic,write_bytes_atomic,save_arrays_atomic
 from braids_core.river_project import identity,load_project,worker_profile
 
 
@@ -25,7 +25,7 @@ def encode_tree(tree):
     meshes=[]
     for mesh in tree.meshes:
         meshes.append(dict(domain_id=mesh.domain_id,crs_wkt=mesh.crs_wkt,grid=asdict(mesh.grid),
-            cells=[asdict(c) for c in mesh.cells],faces=[asdict(f) for f in mesh.faces],
+            cells=[vars(c).copy() for c in mesh.cells],faces=[vars(f).copy() for f in mesh.faces],
             obstacle_ids=mesh.obstacle_ids,solid_area_m2=mesh.solid_area_m2))
     return dict(meshes=meshes,offsets=tree.offsets,parent=tree.parent.tolist(),children=tree.children,
                 node_level=tree.node_level.tolist(),maximum_level=tree.maximum_level.tolist(),refinement_ratio=tree.refinement_ratio)
@@ -37,8 +37,13 @@ def decode_tree(value):
     from braids_core.boundaries.inlet_io import NativeGrid
     meshes=[]
     for mesh in value['meshes']:
-        cells=tuple(CutCell(**{k:_tuples(v) for k,v in c.items()}) for c in mesh['cells'])
-        faces=tuple(CutFace(**{k:_tuples(v) for k,v in f.items()}) for f in mesh['faces'])
+        # Only these declared fields contain tuples. Avoid recursively walking
+        # every scalar, string and coordinate in millions of known records.
+        cells=tuple(CutCell(**dict(c,centroid_xy=tuple(c['centroid_xy']),
+            vertices_xy=tuple(map(tuple,c['vertices_xy'])),member_indices=tuple(map(tuple,c['member_indices'])),
+            holes_xy=tuple(tuple(map(tuple,r)) for r in c['holes_xy']))) for c in mesh['cells'])
+        faces=tuple(CutFace(**dict(f,start_xy=tuple(f['start_xy']),end_xy=tuple(f['end_xy']),
+            outward_normal=tuple(f['outward_normal']),breakline_ids=tuple(f['breakline_ids']))) for f in mesh['faces'])
         if any(c.cell_id!=i or c.area_m2<=0 for i,c in enumerate(cells)):raise ValueError('Cached cell geometry differs')
         if any(f.face_id!=i or not 0<=f.owner<len(cells) or not -1<=f.neighbour<len(cells) or f.length_m<=0 for i,f in enumerate(faces)):
             raise ValueError('Cached face geometry differs')
@@ -48,7 +53,7 @@ def decode_tree(value):
     if any(v.shape!=(count,) for v in arrays.values()) or len(value['children'])!=count or value['offsets'][-1]!=count:raise ValueError('Cached hierarchy shape differs')
     for i,children in enumerate(value['children']):
         if any(not 0<=child<count or arrays['parent'][child]!=i for child in children):raise ValueError('Cached ancestry differs')
-    return AMRHierarchy(tuple(meshes),tuple(value['offsets']),arrays['parent'],_tuples(value['children']),arrays['node_level'],arrays['maximum_level'],value['refinement_ratio'])
+    return AMRHierarchy(tuple(meshes),tuple(value['offsets']),arrays['parent'],tuple(map(tuple,value['children'])),arrays['node_level'],arrays['maximum_level'],value['refinement_ratio'])
 
 
 def cached(root,contract,filename,build,*,stop):
@@ -73,7 +78,7 @@ def prepare(project_path,output,*,asset_cache,stop_file=None):
     project_path=Path(project_path).resolve();project=load_project(project_path);target=Path(output)
     if target.exists():raise FileExistsError(target)
     target.mkdir(parents=True);write_json_atomic(target/'PROJECT.json',project)
-    timings={};reuse={};start=time.perf_counter()
+    timings={};reuse={};assets={};start=time.perf_counter()
     def progress(phase,percent):
         worker.check_stop(stop_file);write_json_atomic(target/'PROGRESS.json',dict(status='preparing',phase=phase,percent=percent))
     def timed(name,fn):
@@ -88,8 +93,13 @@ def prepare(project_path,output,*,asset_cache,stop_file=None):
         progress('Loading or constructing mesh geometry',3)
         built={}
         def build_tree(path):
-            built['tree']=worker.hierarchy(profile,stop_file);write_json_atomic(path,encode_tree(built['tree']))
+            built['tree']=worker.hierarchy(profile,stop_file)
+            # Internal cache data needs no indentation. Keep the same JSON
+            # values, atomic publication and full content checksum contract.
+            payload=json.dumps(encode_tree(built['tree']),allow_nan=False,separators=(',',':'))+'\n'
+            write_bytes_atomic(path,payload.encode('utf-8'))
         path,reuse['geometry']=timed('geometry_s',lambda:cached(Path(asset_cache)/'geometry',geometry,'TREE.json',build_tree,stop=stop_file))
+        assets['geometry']=path.parent.relative_to(Path(asset_cache)).as_posix()
         tree=built.get('tree')
         if tree is None:tree=timed('geometry_decode_s',lambda:decode_tree(json.loads(path.read_text(encoding='utf-8'))))
         progress('Reusing DEM integrals' if reuse['geometry'] else 'Integrating DEM',20)
@@ -101,6 +111,8 @@ def prepare(project_path,output,*,asset_cache,stop_file=None):
                 cancelled=lambda:stop_file is not None and Path(stop_file).exists(),threads=profile['controls']['threads'])
             save_arrays_atomic(path,z=z,audit=np.array(json.dumps(audit)))
         path,reuse['terrain']=timed('terrain_s',lambda:cached(Path(asset_cache)/'terrain',terrain_contract,'TERRAIN.npz',build_terrain,stop=stop_file))
+        assets['terrain']=path.parent.relative_to(Path(asset_cache)).as_posix()
+        write_json_atomic(target/'DESKTOP_ASSETS.json',dict(schema=1,assets=assets))
         with np.load(path,allow_pickle=False) as f:z=f['z'].copy();audit=json.loads(str(f['audit']))
         initial=deepcopy(project['initial']);selected=project['model']['physics']['sediment']
         if selected is not None:
@@ -109,7 +121,7 @@ def prepare(project_path,output,*,asset_cache,stop_file=None):
             initial['layer_fractions']=RiverMaterial.from_columns(ColumnMethodsV101(**project['settings']['columns'])).input_column_fractions(initial['layer_fractions'],selected['fraction_basis']).tolist()
         # The same field recipe as adaptive_river_gis, always freshly resolved.
         thickness=np.asarray(initial['layer_thickness_m'],float);fractions=np.asarray(initial['layer_fractions'],float)
-        h=np.maximum(float(initial['stage_m'])-z,0.);velocity=np.asarray(initial['velocity_m_s'],float)
+        h=np.full_like(z,float(initial['depth_m'])) if 'depth_m' in initial else np.maximum(float(initial['stage_m'])-z,0.);velocity=np.asarray(initial['velocity_m_s'],float)
         q=np.vstack((h,velocity[:,None]*h));q[1:,h<=1e-6]=0.;ng=len(material.fraction_ids);n=len(z)
         concentration=np.broadcast_to(np.asarray(initial['concentration_kg_m3'],float)[:,None],(ng,n)).copy();concentration[:,h<=1e-6]=0.
         fields=dict(q=q,rock=z-thickness.sum(),thickness=np.broadcast_to(thickness[:,None],(len(thickness),n)).copy(),
@@ -147,8 +159,15 @@ def prepare(project_path,output,*,asset_cache,stop_file=None):
         write_json_atomic(core/'PROGRESS.json',dict(status='prepared',phase='prepared',percent=100))
         if dependencies!={p.name:sha(p) for p in _raster_files(dem)} or runtime!=public.source_identity():raise ValueError('Preparation inputs/runtime changed while preparing')
         worker.check_stop(stop_file)
+        files={name:sha(target/name) for name in public.PREPARED_FILES}
+        # Bind the complete hierarchy to this preparation, not merely to the
+        # mutable shared asset cache. Old preparations remain valid and rebuild.
+        if not profile.get('adaptive',False):
+            payload=json.dumps(encode_tree(tree),allow_nan=False,separators=(',',':'))+'\n'
+            write_bytes_atomic(target/'TOPOLOGY.json',payload.encode('utf-8'))
+            files['TOPOLOGY.json']=sha(target/'TOPOLOGY.json')
         write_json_atomic(target/'PREPARED.json',dict(schema=public.PREPARED_SCHEMA,project_id=identity(project),runtime_id=runtime,
-            terrain_sha256=sha(dem),files={name:sha(target/name) for name in public.PREPARED_FILES}))
+            terrain_sha256=sha(dem),files=files))
         timings['total_s']=time.perf_counter()-start
         write_json_atomic(target/'DESKTOP_PREPARATION.json',dict(schema=1,helper_sha256=helper,reused=reuse,timings=timings,cells=cells,
             preview_sha256=sha(target/'MESH_PREVIEW.npz')))

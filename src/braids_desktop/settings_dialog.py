@@ -1,7 +1,7 @@
 """Presentation preferences, following the AVAC Desktop settings workflow."""
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QDialog,QVBoxLayout,QFormLayout,QComboBox,QPushButton,QColorDialog,QDialogButtonBox,QLabel,QCheckBox,QSpinBox
-from ._avac.preferences import appearance,geometry_color,mesh_color,measurement_color,snap_enabled,adaptive_mesh,settings
+from ._avac.preferences import appearance,geometry_color,mesh_color,measurement_color,snap_enabled,adaptive_mesh,settings,smooth_level
 from ._avac.i18n import LANGUAGES,saved_language,saved_separator,save_interface,tr
 
 
@@ -37,6 +37,9 @@ class SettingsDialog(QDialog):
         self.adaptive_mesh=QCheckBox(tr('Animate adaptive mesh'));self.adaptive_mesh.setChecked(adaptive_mesh());form.addRow(self.adaptive_mesh)
         self.particle_density=QSpinBox();self.particle_density.setRange(50,10000);self.particle_density.setSingleStep(100)
         self.particle_density.setValue(settings().value('map/particle_density',1000,type=int));form.addRow('Flow particle count',self.particle_density)
+        self.smooth_level=QSpinBox();self.smooth_level.setRange(0,100);self.smooth_level.setSuffix(' %');self.smooth_level.setValue(smooth_level())
+        self.smooth_level.setToolTip('0% shows the original result cells; 100% uses the previous full smoothing. Applies to the map display only.')
+        form.addRow(tr('Smooth level'),self.smooth_level)
         note=QLabel(tr('Language changes apply after restarting BRAIDS. Other presentation choices apply immediately.'))
         note.setWordWrap(True);root.addWidget(note)
         buttons=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel);buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);root.addWidget(buttons)
@@ -55,7 +58,7 @@ class SettingsDialog(QDialog):
         store.setValue('interface/mesh_color',self.mesh_color);store.sync()
         store.setValue('interface/measurement_color',self.measurement_color)
         store.setValue('map/snap',self.snap.isChecked());store.setValue('map/adaptive_mesh',self.adaptive_mesh.isChecked());store.sync()
-        store.setValue('map/particle_density',self.particle_density.value());store.sync()
+        store.setValue('map/particle_density',self.particle_density.value());store.setValue('map/smooth_level',self.smooth_level.value());store.sync()
 
     def _choose_mesh_color(self):
         color=QColorDialog.getColor(QColor(self.mesh_color),self,tr('Mesh color'))

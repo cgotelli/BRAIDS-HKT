@@ -31,7 +31,7 @@ def apply_theme(app: QApplication, mode: str | None = None) -> None:
     palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#6a7b8e"))
     palette.setColor(QPalette.PlaceholderText, QColor("#8296aa"))
     if mode == "light":
-        for role, value in ((QPalette.Window, "#f3f6fa"), (QPalette.WindowText, "#182f43"),
+        for role, value in ((QPalette.Window, "#ffffff"), (QPalette.WindowText, "#182f43"),
                             (QPalette.Base, "#ffffff"), (QPalette.AlternateBase, "#edf2f7"),
                             (QPalette.Text, "#182f43"), (QPalette.Button, SURFACE_BLUE),
                             (QPalette.ButtonText, "#ffffff"), (QPalette.PlaceholderText, "#667e91")):
@@ -86,11 +86,11 @@ def apply_theme(app: QApplication, mode: str | None = None) -> None:
     QPushButton#Stop:hover:enabled { background: #d13f50; }
     """
     if mode == "light":
-        colors = {"#0e1621":"#f3f6fa", "#121f2d":"#e7eef5", "#e4edf5":"#182f43",
-                  "#111c29":"#eaf0f6", "#0f1925":"#ffffff", "#8fa4b8":"#4b667d",
+        colors = {"#0e1621":"#ffffff", "#121f2d":"#ffffff", "#e4edf5":"#182f43",
+                  "#111c29":"#ffffff", "#0f1925":"#ffffff", "#8fa4b8":"#4b667d",
                   "#6db9e8":"#22618b", "#83c8ed":"#22618b", "#2a3d50":"#c4d2df",
                   "#293b4d":"#c4d2df", "#2c4054":"#c4d2df", "#34485b":"#bccbd8",
-                  "#121d2a":"#e7eef5", "#cddbe7":"#182f43", "#101c29":"#e7eef5",
+                  "#121d2a":"#ffffff", "#cddbe7":"#182f43", "#101c29":"#e7eef5",
                   "#94aabd":"#36556c", "#172534":"#dde7f0", "#96adbf":"#36556c",
                   "#131e2b":"#ffffff", "#29384a":"#c4d2df", "#253547":"#c4d2df"}
         colors.update({"#304b63":"#dce6ee", "#95aabd":"#6b8295", "#476780":"#bdcedb",

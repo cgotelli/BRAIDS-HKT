@@ -21,7 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler-bin', type=Path)
     parser.add_argument('--backend', choices=('cpu', 'gpu'), default='cpu')
-    parser.add_argument('--features', choices=('hydraulics', 'turbine', 'sediment', 'combined'), default='hydraulics')
+    parser.add_argument('--features', choices=('hydraulics', 'turbine', 'sediment', 'suspended', 'combined'), default='hydraulics')
     parser.add_argument('--output', type=Path, default=ROOT / '.recovery-check')
     args = parser.parse_args()
     configure_compilers(args.compiler_bin)
@@ -65,11 +65,22 @@ def main():
         case = deepcopy(document)
         request = case['model']['request']
         request['execution']['integrator'] = integrator
-        if args.features in ('sediment', 'combined'):
+        if args.features in ('sediment', 'suspended', 'combined'):
             selected = new_bedload_selection()
             selected['capacity'] = dict(method='capacity.mpm', parameters={'ACal': 1.},
                                         grain_sizes_m={'d50': .0005, 'd90': .00075})
             selected['bed'].update(composition='bed.layered', transport_layer='transport_layer.constant')
+            if args.features == 'suspended':
+                selected.update(transport='split', suspension='suspension.settling_only')
+                case['initial']['concentration_kg_m3'] = [.01]
+                from braids_core.sediment.river_supplied_suspension import parameters
+                case['supplied_suspension_parameters'] = parameters(.0002)
+                selected['bed'].update(composition='bed.fully_mixed', transport_layer='off')
+                case['settings']['columns']['bed'] = 'mixed'
+                case['initial'].update(layer_thickness_m=[.22], layer_fractions=[[1.]])
+                from braids_core.sediment.bed_columns_v101 import ColumnMethodsV101
+                from braids_core.sediment.river_column_methods import method_ids
+                case['column_methods'] = method_ids(ColumnMethodsV101(**case['settings']['columns']))
             request['sediment'] = dict(enabled=True, selection=selected)
         if args.features == 'combined':
             request['hydrodynamics']['secondary_flow'] = 'secondary.prognostic'

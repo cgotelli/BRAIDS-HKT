@@ -35,7 +35,9 @@ the recovery commands below supply independent synthetic acceptance checks.
 Use Windows x64. The recovery checks used Python 3.13.5, GNU C++ and Fortran
 13.2.0 (MinGW-w64, UCRT, POSIX threads, SEH, winlibs r8), with OpenMP. Install
 matching `g++.exe` and `gfortran.exe`; both must be in the same compiler `bin`
-directory. Keep that distribution's runtime DLLs alongside them. A QGIS Python
+directory. The [upstream winlibs release](https://github.com/brechtsanders/winlibs_mingw/releases/tag/13.2.0posix-18.1.5-11.0.1-ucrt-r8)
+provides that compiler generation; choose its `x86_64`, POSIX, SEH, UCRT archive.
+Keep that distribution's runtime DLLs alongside the compilers. A QGIS Python
 environment is not required for the standalone application.
 
 From Miniforge or another conda installation:
@@ -52,7 +54,10 @@ python tools/develop.py --compiler-bin C:\toolchains\mingw64\bin
 
 `environment-cpu.yml` specifies the core numerical and GUI dependencies. It is
 an environment specification, not a byte-identical conda lock. The exact original
-package inventory is retained separately. Additional historical utilities may
+package inventory is retained separately. GDAL comes from conda-forge; Rasterio
+and Shapely use their wheels, which supply independent GDAL/GEOS libraries. This
+matches the original mixed environment and avoids incompatible conda GEOS pins.
+Additional historical utilities may
 use optional packages listed in that inventory (for example BASEmesh or fluidfoam).
 
 For GPU operation, install a compatible NVIDIA driver and then:

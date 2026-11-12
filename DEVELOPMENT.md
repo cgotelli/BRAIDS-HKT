@@ -60,6 +60,18 @@ matches the original mixed environment and avoids incompatible conda GEOS pins.
 Additional historical utilities may
 use optional packages listed in that inventory (for example BASEmesh or fluidfoam).
 
+For the exact Windows package builds used in the clean recovery check, use the
+tested lock files instead of solving the YAML again:
+
+```powershell
+conda create -n braids-dev --file packaging/conda-win64.explicit.txt
+conda activate braids-dev
+python -m pip install -r packaging/cpu-pip.lock.txt
+```
+
+`matplotlib-base` supplies Matplotlib without asking conda to install another
+Qt binding; PySide6 and shiboken6 are installed together from matching wheels.
+
 For GPU operation, install a compatible NVIDIA driver and then:
 
 ```powershell
@@ -77,6 +89,7 @@ python tools/check_recovery.py --compiler-bin C:\toolchains\mingw64\bin
 python tools/check_recovery.py --compiler-bin C:\toolchains\mingw64\bin --features combined
 python tools/check_recovery.py --compiler-bin C:\toolchains\mingw64\bin --backend gpu
 python tools/check_recovery.py --compiler-bin C:\toolchains\mingw64\bin --backend gpu --features combined
+python tools/check_recovery.py --compiler-bin C:\toolchains\mingw64\bin --features suspended
 ```
 
 The check creates its own small DEM and project, prepares a mesh and runs both
@@ -84,6 +97,8 @@ f-wave and HLLC. `combined` adds a fixed-axis, 20-degree yawed rotor, MPM bedloa
 and prognostic secondary flow. It verifies completion, finite hydraulic/bed
 states and nonnegative depths. These short checks establish software recovery;
 they do not repeat the experimental validation programme.
+The `suspended` variant additionally exercises independently supplied suspended
+mass and settling using an explicitly specified 0.2 mm suspended diameter.
 
 `tools/develop.py` stages all maintained sources in
 `.development/<source-identity>/runtime`. Original numerical constructors compile

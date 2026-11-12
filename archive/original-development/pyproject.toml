@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "braids-core"
+version = "0.1.0"
+description = "Hydraulic section calculations for the BRAIDS development solver"
+requires-python = ">=3.10"
+dependencies = ["numpy>=2.0,<3"]
+
+[project.optional-dependencies]
+validation = [
+    "matplotlib>=3.9,<4",
+    "netCDF4>=1.7,<2",
+    "opencv-python-headless>=4.10,<6",
+    "psutil>=6,<8",
+    "rasterio>=1.4,<2",
+    "scipy>=1.15,<2",
+    "shapely>=2.0,<3",
+    "xarray>=2025.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["braids_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "validation/hydraulics/sections/tests", "validation/hydraulics/wave_baseline/tests"]

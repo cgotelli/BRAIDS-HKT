@@ -1,0 +1,80 @@
+﻿{
+    "archive":  "D:\\BRAIDS_archive\\20261030_cleanup225",
+    "freeBefore":  52672909312,
+    "freeNow":  108704194560,
+    "records":  [
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\dist",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\dist",
+                        "files":  67451,
+                        "bytes":  11290229712,
+                        "inventory_sha256":  "99089f1222b52db12f3b6c5ed2156131064ddd69c932bc132d850d5bb01c6144",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  107.41725529986434
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_performance134",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_performance134",
+                        "files":  106151,
+                        "bytes":  8863719504,
+                        "inventory_sha256":  "3add5963c958bff9ad39830ff3af373d47a6ebcd78469fe8ae4ae8b729910511",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  118.86385439988226,
+                        "residual_source_files_before_completion":  105970
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_preparation135",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_preparation135",
+                        "files":  70806,
+                        "bytes":  5126696009,
+                        "inventory_sha256":  "e349e67d3ccec578b1c58f70bb47939f01a6f002bb60107a97b89b8f2b25b233",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  102.96710190013982
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_preparation136",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_preparation136",
+                        "files":  73299,
+                        "bytes":  5195728400,
+                        "inventory_sha256":  "3327f230d1d6b70ad7cfd7c0a10262372539c604f4c798219164dec52bad4168",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  111.44312800001353
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_inlet129",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_inlet129",
+                        "files":  153705,
+                        "bytes":  7940232177,
+                        "inventory_sha256":  "71f017689c31dc83b4dbd4c63a6ce5705c4f260ef7c3cda1068c3c2bd6b3abf2",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  233.78548229997978
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_speed130",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_speed130",
+                        "files":  105758,
+                        "bytes":  5153694625,
+                        "inventory_sha256":  "e183a13f6c408cf7cd8bfbefaa2492d78f201dfad5535a4716848c13454b54c8",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  161.91372990002856
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_geometry137",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_geometry137",
+                        "files":  25062,
+                        "bytes":  3981862229,
+                        "inventory_sha256":  "8bbec5c22b73e48e35d896db15766dceb3c7e45a5475c8aeb23a69b5d05a434b",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  44.789750800002366
+                    },
+                    {
+                        "source":  "C:\\Users\\STREEM\\Desktop\\BRAIDS\\validation\\_wall188",
+                        "destination":  "D:\\BRAIDS_archive\\20261030_cleanup225\\workspace\\validation\\_wall188",
+                        "files":  54968,
+                        "bytes":  9887405661,
+                        "inventory_sha256":  "e9240571da6029633073cef52a4cc4ff183e2fa71d7496f3c29e16ac0ad57507",
+                        "all_file_sha256_equal":  true,
+                        "seconds":  96.63385899993591
+                    }
+                ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "milestone": "phase4_general_wet_dry_avalanche",
+  "status": "PASS",
+  "gates_passed": 28,
+  "gates_total": 28,
+  "paired_cases": [
+    "wet_repose",
+    "dry_repose"
+  ],
+  "maximum_cross_model_normalized_profile_l1": 0.0024257151371619066,
+  "minimum_cross_model_profile_correlation": 0.9999999999999998,
+  "source_commit": "c05ed672f0a7fe81c5b9867ef354cfdd53c25379",
+  "fm_image_id": "sha256:f9710e6151d535343be734f553c58c60d233b7ebc0d5702e5904471ab0942ace",
+  "fm_executable_sha256": "18d73145b1e24afdfabc5a312ad21269cc5185f5a51d23b6b0539c7f35b73a75",
+  "braids_executable_sha256": "b066c9055e5c8cd43711880df45163abf374e1fcceab097bd664c10b9e941d54",
+  "evidence": "validation/sediment/delft3d_current/general_avalanche/reports/metrics.json",
+  "amr_regression": "tests/test_amr_native.py::test_general_avalanche_preserves_fraction_mass_and_parallel_identity_with_amr"
+}

@@ -19,3 +19,8 @@ validation/
 results/
 checkpoints/
 .env
+.development/
+.recovery-check/
+*.mod
+*.o
+archive/original-development/comments.md

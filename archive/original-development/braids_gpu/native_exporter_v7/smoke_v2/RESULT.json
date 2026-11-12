@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "scope": "Native initialization/metadata proof only; no CPU or GPU physical trajectory",
+  "exporter_executable_sha256": "78d961f9905013590883b2c489ed1599e2f62e385e29687e16dc34e76c7920b5",
+  "old_export_environment_trigger_disabled": true,
+  "unconditional_zero_step_verified": true,
+  "rows": [
+    {
+      "name": "law2_slope0_off",
+      "law": 2,
+      "Delft3D_ISlope": 0,
+      "native_slope": 0,
+      "secondary_model": 0,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "bbb3d65a8714289cab87a6c1d67fefb8fae104e5e7ded24c6bc6da6cd5456bfb",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "380c31aa64572b20cb7e011663358284ff95979e48a5615cebc7677e3af83273",
+        "normal_metadata.bin": "005e5eef54442c7274cc4369eb171cb7835d7ff2409a6c4e6c8acebe4eef53a2"
+      }
+    },
+    {
+      "name": "law2_slope2_off",
+      "law": 2,
+      "Delft3D_ISlope": 2,
+      "native_slope": 2,
+      "secondary_model": 0,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "bbb3d65a8714289cab87a6c1d67fefb8fae104e5e7ded24c6bc6da6cd5456bfb",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "12e8370440bddb6fde9c957a990a0f90a9be754dd5cfee14fd81279fa6ae29ec",
+        "normal_metadata.bin": "005e5eef54442c7274cc4369eb171cb7835d7ff2409a6c4e6c8acebe4eef53a2"
+      }
+    },
+    {
+      "name": "law2_slope3_off",
+      "law": 2,
+      "Delft3D_ISlope": 3,
+      "native_slope": 3,
+      "secondary_model": 0,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "bbb3d65a8714289cab87a6c1d67fefb8fae104e5e7ded24c6bc6da6cd5456bfb",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "fdfc53045321bdf3d714d6ed3c73743e22572de3bd7e234a0027434a5db4c9f0",
+        "normal_metadata.bin": "005e5eef54442c7274cc4369eb171cb7835d7ff2409a6c4e6c8acebe4eef53a2"
+      }
+    },
+    {
+      "name": "law8_slope0_off",
+      "law": 8,
+      "Delft3D_ISlope": 0,
+      "native_slope": 0,
+      "secondary_model": 0,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "a98c618cbb96a7ab5276b9ea28145e39c37fb9dbbc8b3e50c369b65d25ef7c7c",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "c473a52d2aa85392c1a52f72df848d3f6b70ec5e5e74d5d95dd8d4189f3e9c85",
+        "normal_metadata.bin": "c53164d7e731fefcf1ec2c4d31b4b4efbe042ab0410460c13a7bb85c2f4fdec8"
+      }
+    },
+    {
+      "name": "law8_slope2_off",
+      "law": 8,
+      "Delft3D_ISlope": 2,
+      "native_slope": 5,
+      "secondary_model": 0,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "a98c618cbb96a7ab5276b9ea28145e39c37fb9dbbc8b3e50c369b65d25ef7c7c",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "999142cd5296b4ae592f6d8e331d760d8a407be080d8bff468a45fa5ea366586",
+        "normal_metadata.bin": "c53164d7e731fefcf1ec2c4d31b4b4efbe042ab0410460c13a7bb85c2f4fdec8"
+      }
+    },
+    {
+      "name": "law8_slope3_off",
+      "law": 8,
+      "Delft3D_ISlope": 3,
+      "native_slope": 3,
+      "secondary_model": 0,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "a98c618cbb96a7ab5276b9ea28145e39c37fb9dbbc8b3e50c369b65d25ef7c7c",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "48f23efa28ed240c8e70ec6ad6d17268a867911dcc1a9e8e6a60bad91b89fb4e",
+        "normal_metadata.bin": "c53164d7e731fefcf1ec2c4d31b4b4efbe042ab0410460c13a7bb85c2f4fdec8"
+      }
+    },
+    {
+      "name": "law2_slope2_equilibrium",
+      "law": 2,
+      "Delft3D_ISlope": 2,
+      "native_slope": 2,
+      "secondary_model": 1,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "bbb3d65a8714289cab87a6c1d67fefb8fae104e5e7ded24c6bc6da6cd5456bfb",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "b504bfe95633e53e665d04fd958b4f73723a9e75637be49a825482f9afebfb39",
+        "normal_metadata.bin": "005e5eef54442c7274cc4369eb171cb7835d7ff2409a6c4e6c8acebe4eef53a2"
+      }
+    },
+    {
+      "name": "law2_slope2_prognostic",
+      "law": 2,
+      "Delft3D_ISlope": 2,
+      "native_slope": 2,
+      "secondary_model": 2,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "bbb3d65a8714289cab87a6c1d67fefb8fae104e5e7ded24c6bc6da6cd5456bfb",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "2028ffe2265a4bd6c809c0e9248be417f074fbb1cf2b9f6951d9ac7c40d0d091",
+        "normal_metadata.bin": "005e5eef54442c7274cc4369eb171cb7835d7ff2409a6c4e6c8acebe4eef53a2"
+      }
+    },
+    {
+      "name": "law8_slope3_equilibrium",
+      "law": 8,
+      "Delft3D_ISlope": 3,
+      "native_slope": 3,
+      "secondary_model": 1,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "a98c618cbb96a7ab5276b9ea28145e39c37fb9dbbc8b3e50c369b65d25ef7c7c",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "9e7c66567af43a6878599864febcce68b470c04c91f57b1745a5b77b28bdfe0e",
+        "normal_metadata.bin": "c53164d7e731fefcf1ec2c4d31b4b4efbe042ab0410460c13a7bb85c2f4fdec8"
+      }
+    },
+    {
+      "name": "law8_slope3_prognostic",
+      "law": 8,
+      "Delft3D_ISlope": 3,
+      "native_slope": 3,
+      "secondary_model": 2,
+      "initial_state_unchanged": true,
+      "native_time_s": 0.0,
+      "solver_steps": 0,
+      "diffusion_coefficients_exported": true,
+      "artifacts": {
+        "case.data.bin": "a98c618cbb96a7ab5276b9ea28145e39c37fb9dbbc8b3e50c369b65d25ef7c7c",
+        "coupled_diffusion.bin": "d357e34934487e4144e3cd11dcbac51e70c9718426c495bfe8733e3774e201b4",
+        "coupled_input.bin": "3dcaf06fed282428706d57c89e10f9004bb666b91f445e76705ed9ab3540a4aa",
+        "normal_metadata.bin": "c53164d7e731fefcf1ec2c4d31b4b4efbe042ab0410460c13a7bb85c2f4fdec8"
+      }
+    }
+  ],
+  "count": 10,
+  "Delft3D_source_modified": false
+}

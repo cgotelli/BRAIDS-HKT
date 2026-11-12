@@ -1,0 +1,164 @@
+{
+  "format": "braids-phase2-qualification-v1",
+  "phase": 2,
+  "title": "Conservative bed-load and Exner morphodynamics",
+  "status": "PASS",
+  "qualified_on": "2026-09-23",
+  "steps_passed": 9,
+  "steps_total": 9,
+  "qualification_cases": 8,
+  "gates_passed": 222,
+  "gates_total": 222,
+  "comparison_basis": [
+    "current-source Delft3D4",
+    "independent analytic/manufactured references"
+  ],
+  "scope": [
+    "conservative bed-load-driven Exner evolution at morphology factor 1",
+    "finite active layer, substrate entrainment and non-erodible base",
+    "wetting/drying, oblique cut-cell geometry and native AMR",
+    "grid/time sensitivity, OpenMP determinism and checkpoint restart"
+  ],
+  "limitations": [
+    "This does not qualify suspended-load or cohesive morphodynamics.",
+    "General bar avalanching, secondary-flow transport and lateral bank failure remain later phases.",
+    "The wetting/drying comparison is qualitative across discretizations; its bed-change correlation is retained explicitly.",
+    "The timestep sequence reaches a spatial-error floor and does not establish a formal temporal order.",
+    "Laboratory braided-river prediction remains Phase 7 and is not implied by this result."
+  ],
+  "key_results": {
+    "affine_maximum_relative_rate_error": 8.659739592076221e-14,
+    "minimum_supply_front_profile_correlation": 0.9999277835916566,
+    "translating_bedform_braids_delft3d_correlation": 0.9996789675485003,
+    "active_layer_bed_change_correlation": 0.9981786574132994,
+    "wetting_drying_bed_change_correlation": 0.7984984161247137,
+    "oblique_rotation_profile_l1": 0.013013084989399449,
+    "oblique_braids_delft3d_profile_l1": 0.01910708773639524,
+    "fixed_amr_profile_l1": 0.007620705696869588,
+    "fixed_amr_profile_correlation": 0.9998786065598972,
+    "amr_average_leaf_fraction": 0.745,
+    "amr_sediment_budget_relative_residual": 7.437386395678035e-11,
+    "grid_pair_contraction_ratio": 0.24460126530659268,
+    "time_cauchy_envelope_profile_l1": 7.934677504928267e-06,
+    "thread_maximum_state_difference": 0.0,
+    "restart_maximum_state_difference": 0.0,
+    "restart_checkpoint_binary_identical": true,
+    "maximum_reported_braids_total_sediment_budget_relative_residual": 1.41074206973504e-10
+  },
+  "milestones": [
+    {
+      "steps": [
+        1,
+        2
+      ],
+      "case_id": "exner_foundations",
+      "title": "Zero-change and affine Exner foundations",
+      "status": "PASS",
+      "gates_passed": 16,
+      "gates_total": 16,
+      "metrics_path": "validation/sediment/delft3d_current/exner_foundations/reports/metrics.json",
+      "metrics_sha256": "5138c6cbda339cfb4b554433c7494942169cef31b40d810155c9290a76815213",
+      "report_path": "validation/sediment/delft3d_current/exner_foundations/reports/REPORT.md",
+      "report_sha256": "48af6d8956c5c1f38c8e694b6d82b258b792d1d01848e45d4e659a43ac85605b"
+    },
+    {
+      "steps": [
+        3
+      ],
+      "case_id": "inlet_supply_fronts",
+      "title": "Excess/deficit supply fronts",
+      "status": "PASS",
+      "gates_passed": 28,
+      "gates_total": 28,
+      "metrics_path": "validation/sediment/delft3d_current/inlet_supply_fronts/reports/metrics.json",
+      "metrics_sha256": "30fd8d42895613e8399e23af938687b5e46f08c27c5435ff0a1949a29b25ba7f",
+      "report_path": "validation/sediment/delft3d_current/inlet_supply_fronts/reports/REPORT.md",
+      "report_sha256": "7c6a824040a9431843e0b0e292cff8ae9721f26fe5e3b13636504e36c918a49c"
+    },
+    {
+      "steps": [
+        4
+      ],
+      "case_id": "translating_bedform",
+      "title": "Complete translating bedform",
+      "status": "PASS",
+      "gates_passed": 38,
+      "gates_total": 38,
+      "metrics_path": "validation/sediment/delft3d_current/translating_bedform/reports/metrics.json",
+      "metrics_sha256": "cb8e7fcac6df5c35cc0663af5457041d74189f56e75ecca6bc3ee0494c771c3e",
+      "report_path": "validation/sediment/delft3d_current/translating_bedform/reports/REPORT.md",
+      "report_sha256": "19f1922dd6c756a31ba0d5a72a2931e2f558c992a3e9d8113d45a73361f01400"
+    },
+    {
+      "steps": [
+        5
+      ],
+      "case_id": "active_layer_exhaustion",
+      "title": "Active layer, substrate and bedrock",
+      "status": "PASS",
+      "gates_passed": 24,
+      "gates_total": 24,
+      "metrics_path": "validation/sediment/delft3d_current/active_layer_exhaustion/reports/metrics.json",
+      "metrics_sha256": "0bbecee89187a1bd4b3e76a6d59cda3610480d0250623e6c487fd0cb54a24af9",
+      "report_path": "validation/sediment/delft3d_current/active_layer_exhaustion/reports/REPORT.md",
+      "report_sha256": "b26f8b61bb1d54d25e2594142baaef3658de520fa9b62ebf8f8fd565517b060e"
+    },
+    {
+      "steps": [
+        6
+      ],
+      "case_id": "wetting_drying_bar",
+      "title": "Wetting/drying over a mobile bar",
+      "status": "PASS",
+      "gates_passed": 18,
+      "gates_total": 18,
+      "metrics_path": "validation/sediment/delft3d_current/wetting_drying_bar/reports/metrics.json",
+      "metrics_sha256": "8567e4bc449a8de109efd7576e806baa7fcf35eddb1ee05f1aec4ddfe4aba9c7",
+      "report_path": "validation/sediment/delft3d_current/wetting_drying_bar/reports/REPORT.md",
+      "report_sha256": "64d68e958d8e00ca4bca05c63ba7db1c10a7d5101f04fe32aa84be5dbc004419"
+    },
+    {
+      "steps": [
+        7
+      ],
+      "case_id": "oblique_front_equivalence",
+      "title": "Oblique-front geometry equivalence",
+      "status": "PASS",
+      "gates_passed": 39,
+      "gates_total": 39,
+      "metrics_path": "validation/sediment/delft3d_current/oblique_front_equivalence/reports/metrics.json",
+      "metrics_sha256": "39b45b488396ee8d335d8464e374d8c7767c03d28063d9ad430b079a6c95bce8",
+      "report_path": "validation/sediment/delft3d_current/oblique_front_equivalence/reports/REPORT.md",
+      "report_sha256": "c5e9c9d1585a5a8e447089469b2de371276312c105892274d0055b62d746f7a2"
+    },
+    {
+      "steps": [
+        8
+      ],
+      "case_id": "fixed_amr_equivalence",
+      "title": "Fixed-grid versus AMR equivalence",
+      "status": "PASS",
+      "gates_passed": 23,
+      "gates_total": 23,
+      "metrics_path": "validation/sediment/delft3d_current/fixed_amr_equivalence/reports/metrics.json",
+      "metrics_sha256": "7143ffc172a6a51af80b2ea21a1e3653376370662d22ca4f2213c91d9109507f",
+      "report_path": "validation/sediment/delft3d_current/fixed_amr_equivalence/reports/REPORT.md",
+      "report_sha256": "722839dcb14ecc7cb97a0438eef86ead35a36fb40021e5cccb7e9f9eff9b93bf"
+    },
+    {
+      "steps": [
+        9
+      ],
+      "case_id": "convergence_restart",
+      "title": "Grid/time/thread/restart convergence",
+      "status": "PASS",
+      "gates_passed": 36,
+      "gates_total": 36,
+      "metrics_path": "validation/sediment/delft3d_current/convergence_restart/reports/metrics.json",
+      "metrics_sha256": "909c6ccab7a4ebfda557aac26bf2562fd8608d304426c09dbadb408ec703cb75",
+      "report_path": "validation/sediment/delft3d_current/convergence_restart/reports/REPORT.md",
+      "report_sha256": "e34a6d7f5e143068efa113dfaf855c446b6609efb84b30d185739ce0013ee195"
+    }
+  ],
+  "integrated_report": "validation/sediment/delft3d_current/phase2_qualification/reports/PHASE2_QUALIFICATION.md"
+}

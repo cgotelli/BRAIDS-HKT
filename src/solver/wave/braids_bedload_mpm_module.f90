@@ -198,7 +198,7 @@ contains
         ! Identical physical grains have the same distribution irrespective of
         ! the number or volume shares of their bookkeeping labels. Invert that
         ! piecewise-linear log-CDF directly, rather than bisect it 60 times per
-        ! wet cell and RK stage. Keep validation/empty-mixture handling above;
+        ! wet cell and RK stage. Keep braids_support/empty-mixture handling above;
         ! genuinely mixed diameters retain the original path below.
         if(all(d50==d50(1))) then
             x=log(d50(1))

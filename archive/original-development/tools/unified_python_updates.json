@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "updates": [
+    {"path": "braids_core/sediment/portable_river_runtime.py", "before": "825bb0a7737ee99d9fa2609c24f146e170146b2b684da2cd36525eadfb1da9a0", "after": "75f866a7506d928285c8e89a8578e1e7e709968748b267f9829656b7721f819c", "reason": "alpha108 portable constructor parity; native kernels unchanged"},
+    {"path": "braids_core/sediment/river_polygon_banks.py", "before": "b3e890f6599762b2767f72767ebcc3658f1069ab0ca413570fccf5155b854256", "after": "69960db266b4f68db29536e9ff10c3286f5a67b23ab7eb81bec9014e2587be07", "reason": "Test1 projected-coordinate polygon precision and immutable source geometry; native kernels unchanged"},
+    {"path": "braids_core/sediment/river_amr_transfer.py", "before": "52eafbb6da9662d22e0e56a0a156a42b2c8d6e57428043565328364a07cfebdb", "after": "636b689eaa9a27fa6a7a5d8cc591aba1a4e80e956fc9c3f35c8c8213fa5b7d5c", "reason": "Test1 exact original polygons and unchanged-boundary permutation; native kernels unchanged"}
+  ]
+}

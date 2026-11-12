@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "milestone": "phase4_bedform_roughness_feedback",
+  "qualified": true,
+  "status": "PASS",
+  "gates_passed": 9,
+  "gates_total": 9,
+  "default_enabled": false,
+  "model": "instantaneous equilibrium Fredsoe-MPM dune height with Van Rijn 1984 length and roughness",
+  "materiality": {
+    "delft3d_mean_water_level_change_m": 0.32205281185520196,
+    "braids_mean_water_level_change_m": 0.2857909327696522,
+    "braids_to_delft3d_effect_ratio": 0.887403935781025
+  },
+  "evidence": "validation/sediment/delft3d_current/bedform_roughness_assessment/reports/metrics.json",
+  "delft3d_source_commit": "c05ed672f0a7fe81c5b9867ef354cfdd53c25379",
+  "regressions": [
+    "tests/test_bedform_roughness.py",
+    "tests/test_delft3d_bedform_roughness.py"
+  ],
+  "scope": "Roughness-corrected MPM with noncohesive bed material. Suspended exchange, normal-depth inlet control, and combinations with other experimental morphology processes fail closed."
+}

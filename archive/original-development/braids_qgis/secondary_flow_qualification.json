@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "milestone": "phase4_secondary_flow_transport",
+  "status": "PASS",
+  "gates_passed": 15,
+  "gates_total": 15,
+  "paired_cases": [
+    "mild_bend",
+    "symmetric_bifurcation"
+  ],
+  "minimum_curvature_correlation": 0.95493218137982,
+  "minimum_spiral_intensity_correlation": 0.9772307712733025,
+  "minimum_fraction_exner_effect_correlation": 0.9515665660282697,
+  "maximum_mean_transport_direction_error_deg": 6.579831951701953,
+  "source_commit": "c05ed672f0a7fe81c5b9867ef354cfdd53c25379",
+  "fm_image_id": "sha256:f9710e6151d535343be734f553c58c60d233b7ebc0d5702e5904471ab0942ace",
+  "fm_executable_sha256": "18d73145b1e24afdfabc5a312ad21269cc5185f5a51d23b6b0539c7f35b73a75",
+  "braids_executable_sha256": "58814862d7dd78d6dcb063bc81127326d3fd2fe6476644a1700df76dc351de98",
+  "evidence": "validation/sediment/delft3d_current/secondary_flow/reports/metrics.json",
+  "regressions": [
+    "tests/test_secondary_flow.py::test_native_secondary_flow_restart_is_bitwise_identical",
+    "tests/test_amr_native.py::test_secondary_flow_is_parallel_exact_restart_exact_and_conservative_with_amr"
+  ],
+  "scope": "Equilibrium planar secondary flow changes bed-load direction only; BetaSpiral momentum forcing and Coriolis are disabled."
+}

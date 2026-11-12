@@ -1,0 +1,25 @@
+{
+  "application": "BRAIDS",
+  "version": "0.1.0-preview68",
+  "ui_qualification": "validation/hydrokinetic_turbines/reports/wake_mesh80/REPORT.md",
+  "ui_reference": {
+    "repository": "https://github.com/cgotelli/AVAC-Desktop/",
+    "commit": "d6ac7127e41d62739ce3cafc6b1eea7635c2a6da",
+    "license": "AGPL-3.0-or-later",
+    "native_avac_engines_included": false
+  },
+  "solver": {
+    "source": "desktop\\qualification\\wake_mesh80\\candidate",
+    "base_source": "dist/unified-alpha136/braids_qgis/river_runtime",
+    "staged_location": "desktop/runtime",
+    "runtime_manifest_sha256": "17b2c1a8ca1d3d9e65a2558f3f5c151fdb4ea19c19143c18b5d696e9c699bbe0",
+    "method": "qualified explicit SSPRK22 augmented f-wave",
+    "qgis_dependency": false,
+    "compiler_required": false,
+    "Delft3D_included": false,
+    "source_modified_for_desktop": true,
+    "modification_scope": "Per-turbine wake length in metres beside the editor and prepared-mesh source logging. Geometry and solver arithmetic unchanged.",
+    "qualification": "validation/hydrokinetic_turbines/reports/wake_mesh80/REPORT.md"
+  },
+  "distribution_scope": "Local Windows preview with isolated Qt environment sharing existing scientific Python; clean-PC installer not yet qualified"
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "milestone": "phase4_morphological_acceleration",
+  "qualified": true,
+  "status": "PASS",
+  "gates_passed": 22,
+  "gates_total": 22,
+  "default_enabled": false,
+  "constant_factor_range": [1, 20],
+  "published_regime_limits": {
+    "quasi_steady_subcritical_bedform": 20,
+    "wet_dry_hydraulic_transient": 1
+  },
+  "time_varying_steady_block_schedule": true,
+  "interpolation": "Delft3D-compatible block interpolation",
+  "evidence": "validation/sediment/delft3d_current/morphological_acceleration/reports/metrics.json",
+  "delft3d_source_commit": "c05ed672f0a7fe81c5b9867ef354cfdd53c25379",
+  "regressions": [
+    "tests/test_morphological_acceleration.py",
+    "tests/test_delft3d_morphological_acceleration.py"
+  ],
+  "scope": "Conservative bed-load/Exner acceleration only. Suspended exchange, time-varying hydraulic boundaries, legacy bank erosion, and process-separated bank failure fail closed. MorFac 1 is required for wet/dry hydraulic transients."
+}

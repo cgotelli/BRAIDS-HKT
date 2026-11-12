@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "milestone": "phase4_process_separated_bank_failure",
+  "qualified": true,
+  "status": "PASS",
+  "gates_passed": 13,
+  "gates_total": 13,
+  "evidence": "validation/sediment/delft3d_current/bank_failure/reports/metrics.json",
+  "non_goals": [
+    "geotechnical factor of safety",
+    "pore pressure and seepage",
+    "thermal erosion",
+    "moving overhang mesh"
+  ]
+}

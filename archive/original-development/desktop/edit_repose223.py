@@ -1,0 +1,28 @@
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+def edit(name,old,new):
+    p=ROOT/name;s=p.read_text(encoding='utf-8');assert old in s,(name,old);p.write_text(s.replace(old,new),encoding='utf-8')
+edit('braids_core/river_project.py','braids.river-project.v34','braids.river-project.v35')
+edit('braids_desktop/__init__.py','0.1.0-preview46','0.1.0-preview47')
+edit('braids_core/river_project.py','(s["avalanche"] == "redistribution.braids_conservative_wet_dry_avalanche")',
+     '(s["avalanche"] in ("redistribution.braids_conservative_wet_dry_avalanche", "redistribution.jiang_cao_repose_exner223_v1"))')
+edit('braids_core/sediment/adaptive_river_worker.py',"{'bank_theta','collapse','collapse_slope'}","{'bank_theta','collapse','collapse_slope','repose_angle_deg'}")
+edit('braids_core/sediment/adaptive_river_worker.py',"b['bank_theta'],b['collapse_slope']","b['bank_theta'],b['collapse_slope'],b['repose_angle_deg']")
+edit('braids_core/sediment/adaptive_river_worker.py',"or b['collapse_slope']<=0:","or b['collapse_slope']<=0 or not 0<b['repose_angle_deg']<90:")
+edit('braids_core/sediment/adaptive_river_worker.py',"        if backend=='gpu':a.hydraulics.rock[:]=col.rock", "        if backend=='gpu':a.hydraulics.rock[:]=col.rock\n        if selected is not None and selected['avalanche']=='redistribution.jiang_cao_repose_exner223_v1':\n            from .river_repose import install as install_repose\n            install_repose(a,p['bank']['repose_angle_deg'])")
+edit('braids_desktop/services.py','bank=dict(bank_theta=0., collapse=False, collapse_slope=.5)', 'bank=dict(bank_theta=0., collapse=False, collapse_slope=.5, repose_angle_deg=32.)')
+edit('braids_desktop/forms.py',"selected['avalanche']=='redistribution.braids_conservative_wet_dry_avalanche'", "selected['avalanche'] in ('redistribution.braids_conservative_wet_dry_avalanche','redistribution.jiang_cao_repose_exner223_v1')")
+edit('braids_desktop/forms.py','collapse_slope=p.collapse_slope.value()),','collapse_slope=p.collapse_slope.value(),repose_angle_deg=p.repose_angle_deg.value()),')
+edit('braids_desktop/forms.py',"collapse_summary(s['avalanche'],slope=p.collapse_slope.value())", "collapse_summary(s['avalanche'],slope=p.collapse_slope.value(),angle=p.repose_angle_deg.value())")
+edit('braids_desktop/river_physics.py','Jiang–Cao repose projection (research)','Repose projection (Jiang–Cao criterion)')
+edit('braids_desktop/river_physics.py','        self.wet_slope =', '        self.repose_angle_deg = self._register("repose_angle_deg", number(32., .01, 89.9, 2))\n        self.repose_angle_deg.setToolTip("Measured noncohesive submerged repose angle. Not inferred from grain size. The coupled Jiang–Cao bundle uses its own Bedload repose parameter.")\n        self.wet_slope =')
+edit('braids_desktop/river_physics.py','("Trigger slope (m/m)", self.collapse_slope),','("Trigger slope (m/m)", self.collapse_slope),\n            ("Repose angle (degrees)", self.repose_angle_deg),')
+edit('braids_desktop/river_physics.py','        self.avalanche_time.setEnabled(classic)','        self.avalanche_time.setEnabled(classic)\n        self.repose_angle_deg.setEnabled(self.avalanche_on.isChecked() and self.avalanche.currentData()=="redistribution.jiang_cao_repose200_v1" and not (self.bedload_on.isChecked() and self.capacity.currentData()=="capacity.mpm_jc2026_p15_reconstruction_v1"))')
+edit('braids_desktop/river_physics.py','from braids_core.sediment.collapse_setup import summary\n','from braids_core.sediment.collapse_setup import summary, resolve\n')
+edit('braids_desktop/river_physics.py',"self.avalanche.currentData() if self.enabled.isChecked() and self.avalanche_on.isChecked() else 'off',", "resolve(self.avalanche.currentData() if self.enabled.isChecked() and self.avalanche_on.isChecked() else 'off', self.capacity.currentData() if self.bedload_on.isChecked() else None),")
+edit('braids_desktop/river_physics.py','slope=self.collapse_slope.value())','slope=self.collapse_slope.value(),angle=self.repose_angle_deg.value())')
+edit('braids_desktop/river_physics.py','collapse_slope=bank["collapse_slope"],','collapse_slope=bank["collapse_slope"], repose_angle_deg=bank["repose_angle_deg"],')
+edit('braids_desktop/river_physics.py','(w["avalanche_on"], "avalanche", s["avalanche"])','(w["avalanche_on"], "avalanche", "redistribution.jiang_cao_repose200_v1" if s["avalanche"]=="redistribution.jiang_cao_repose_exner223_v1" else s["avalanche"])')
+edit('braids_desktop/sediment_workflow.py','p.avalanche_on,p.avalanche,p.collapse_slope','p.avalanche_on,p.avalanche,p.collapse_slope,p.repose_angle_deg')
+edit('braids_desktop/sediment_workflow.py',"'with ordinary bedload and/or suspension. MF scales transport and wet exchange, not collapse. Jiang–Cao repose projection uses the bundle’s '","'with ordinary bedload and/or suspension. MF scales transport and wet exchange, not collapse. Repose projection also supports ordinary formulas with the angle above. The coupled Jiang–Cao version uses the bundle’s '")
+print('Updated configuration and Desktop controls')

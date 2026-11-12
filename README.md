@@ -51,4 +51,6 @@ The installer supplies the application, Python environment and solver libraries.
 
 ## License and credits
 
+For source recovery and continued development on another computer, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
 BRAIDS-HKT is distributed under the **GNU Affero General Public License, version 3 or later**. Upstream components retain their own licenses and copyright notices. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

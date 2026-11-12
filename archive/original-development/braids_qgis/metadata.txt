@@ -1,0 +1,12 @@
+[general]
+name=BRAIDS
+description=Unified explicit f-wave CPU/GPU river hydrodynamics and noncohesive morphodynamics.
+version=0.1.0-alpha.136
+qgisMinimumVersion=3.40
+author=BRAIDS
+email=
+about=One tab-based interface for hydrodynamics or noncohesive sediment transport, with explicit CPU/OpenMP or NVIDIA GPU/CUDA selection, compatible physical methods, conservative AMR, restart and mesh-epoch results. Sediment is off by default. New project format only. Experimental first unified release; see FIRST_RELEASE.md for scope and limitations.
+category=Raster
+icon=BRAIDS_logo.png
+hasProcessingProvider=no
+experimental=True

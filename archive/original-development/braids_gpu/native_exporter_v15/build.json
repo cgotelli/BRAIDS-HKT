@@ -1,0 +1,278 @@
+{
+  "schema": 7,
+  "generation": "native_exporter_v15",
+  "command": [
+    "C:\\Strawberry\\c\\bin\\gfortran.EXE",
+    "-O3",
+    "-flto",
+    "-fopenmp",
+    "-ffree-line-length-none",
+    "-ffixed-line-length-none",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\geoclaw_parameters.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_hydraulic_roughness_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_soulsby_van_rijn_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_delft_capacity_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_scalar_capacity_runtime_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_delft_channel_composer_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_sediment_shear_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_exner_mol_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_van_rijn_1993_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bedload_vr1993_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bedload_mpm_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bedform_roughness_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bedload_current_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_secondary_flow_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_curvature_regularization_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_cohesive_exchange_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_hiding_exposure_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bed_slope_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_morphodynamic_flux_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bank_toe_geometry_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bank_toe_supply_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bank_toe_flux_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_distributed_bank_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bank_front_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_accepted_flux_reconstruction_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_bank_reconstruction_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\braids_viscous_inlet_module.f90",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\rpn2_geoclaw.f",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\geoclaw_riemann_utils.f",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\cutcell_solver.f90",
+    "-o",
+    "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\xbraids_delft_export.exe"
+  ],
+  "executable": "C:\\Users\\STREEM\\Desktop\\BRAIDS\\braids_gpu\\native_exporter_v15\\xbraids_delft_export.exe",
+  "executable_sha256": "9ccdd9cb457140eda9ad418a2843047666c40ea1d8fe6031d52a02a4da88fbd8",
+  "compiler_sha256": "ba6f21a1b6b07000bf3a7f9594dd31d951c84e7edbe0d5508f073bf066f9e851",
+  "compiler": "GNU Fortran (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r8) 13.2.0",
+  "driver_sha256": "5ea0e4034cbd35191f88631d1f4db9a71fc18ae65ac22917f1ad2a9dd2186c16",
+  "transform_helpers_sha256": {
+    "tools/build_delft_components_exporter.py": "5ea0e4034cbd35191f88631d1f4db9a71fc18ae65ac22917f1ad2a9dd2186c16",
+    "validation/gpu_fwave/coupled_reference.py": "1d02c6a5bc3d607882d06ddff361c7d3f929a4f8951bad5b54f928200ab5388c",
+    "braids_gpu/build_gaia_initializer.py": "ecde24cfd5f20e014f704140be8700d8518772938e510c7b1929d012d34dc40e",
+    "braids_gpu/build_integrated_initializer.py": "9a6064ad3e5058578afa03e0cc91cc0ee04e2bbd17998475122b6379084065d9"
+  },
+  "production_build_sha256": "39f95713d88f921bcb9f89131ce11fb27a49f83590442c6efadb099eba799966",
+  "production_executable_sha256": "8aa3728ef1bf47ef5e94d6dfb36b3fb58c534684aa9c2082cdfe5d1cdd6ec26d",
+  "parent_executable_sha256": "8aa3728ef1bf47ef5e94d6dfb36b3fb58c534684aa9c2082cdfe5d1cdd6ec26d",
+  "current_source_sha256": {
+    "solver/cut_cells/geoclaw_parameters.f90": "b6e5a70595e93279eac113401dfc2d857978f7a6e885fe730c783c17cc5b3c1d",
+    "solver/wave/braids_hydraulic_roughness_module.f90": "255e523e3650e5b1d28fdbdea7c7d6302e4d1d954adda540b7ad019af6b04fbf",
+    "solver/wave/braids_soulsby_van_rijn_module.f90": "125e72f37a074df7a95e158651fd7365f69c4400457e388e8b5ceaa2ba1364b9",
+    "solver/wave/braids_delft_capacity_module.f90": "eac91803ed99fd587b23e82d1670e4ff752d2116d7cd653e011e822d0ca2fd6d",
+    "solver/wave/braids_scalar_capacity_runtime_module.f90": "78ee1b7caeaab972932246195162d90e601e526c797028909898a28a83013553",
+    "solver/wave/braids_delft_channel_composer_module.f90": "648c73e7e7e0f1daeb0a6f1652c334e3d1700367f62a625730f6976aba278974",
+    "solver/wave/braids_sediment_shear_module.f90": "965d6d17c6f3a45ddf5f515e187fdf44e054dbdce47e57d9a3c8fcca70d6c3c1",
+    "solver/wave/braids_exner_mol_module.f90": "cc32e16439cf7b7636efd2b052045b123b0d32ec7ab8ad2d0c970cfa168986fb",
+    "solver/wave/braids_van_rijn_1993_module.f90": "a12f556c0ff2114eb3a2287be65fa45a695fd7bec4f376e3920ec2e5780a7665",
+    "solver/wave/braids_bedload_vr1993_module.f90": "815e35ec3b32c9c20484e7e56c3f6f1a5bb50fa2e6aa88bc88f04b7fcfe54624",
+    "solver/wave/braids_bedload_mpm_module.f90": "e67995fe3d3f2b5ffe3fa0d2a1cdc95abc439076bef35dbe6b035e1ecf0ffcf6",
+    "solver/wave/braids_bedform_roughness_module.f90": "77f32fd2894e29c06bae02cc975359bb54b19ff24cbbb3dcb230a5dfcaeba99f",
+    "solver/wave/braids_bedload_current_module.f90": "ca59bf18e07c48200ab8a5ec43326349f19dc97f044c71c846dad7ec21a8e402",
+    "solver/wave/braids_secondary_flow_module.f90": "0646e37597912e1d3491f08d8339f38baeef0f1380757d408c8c820815b5670f",
+    "solver/wave/braids_curvature_regularization_module.f90": "f8770b50a2a5eb7c2cf188ac46a62a5fcaad5bc1ecf59df4ac48a3d80f63c253",
+    "solver/wave/braids_cohesive_exchange_module.f90": "caceb34939ef81cd739e66c02506361897adf018e04325be8188697ddc5ca63a",
+    "solver/wave/braids_hiding_exposure_module.f90": "4da9ab77936b192cb78c7f8e524f6da6b8c040983fa5a3f69f4a152d5a852e79",
+    "solver/wave/braids_bed_slope_module.f90": "14b01a6a5b6c3fbf2b80cc3acb7601ba1582227cc3a6dc43c18eb9f0c97de208",
+    "solver/wave/braids_morphodynamic_flux_module.f90": "9b252be10db35f102fe80fbde8dd92bb7a950b94922c26d5f4a7e4328156ae6a",
+    "solver/wave/braids_bank_toe_geometry_module.f90": "504d8b7b093cd30dfa6e28525ef626d44e2609f51c27578f3c380db12d99104e",
+    "solver/wave/braids_bank_toe_supply_module.f90": "1b65bd34778c1623371de475959ce19135e482e56bab6259c5c94496e0f4ed80",
+    "solver/wave/braids_bank_toe_flux_module.f90": "e343260f9c0f08c55e65f71c4b3e9822b4905182c4a082ee2fd0ae7259a0f184",
+    "solver/wave/braids_distributed_bank_module.f90": "c5ce4f873d93f1d56e16cf47fbb17a5962a142e14465361c737d09678cb258dd",
+    "solver/wave/braids_bank_front_module.f90": "cc3c0e3a7b37328afcf3e47a5bb280fafb096281d4b7f426aa0fee65e7d1eb7e",
+    "solver/wave/braids_accepted_flux_reconstruction_module.f90": "8260c29ede8988085661cf3eb61fd208d06641f6f84a00469025668a382f0075",
+    "solver/wave/braids_bank_reconstruction_module.f90": "fee9d141da12e6cc0bf2e42d65bb2adc98c5f81d8523639b7f15b7cea3228979",
+    "solver/cut_cells/braids_viscous_inlet_module.f90": "7c91d088a7224a6bedced1e51e45d5509397dcfead139445c368bf56f23e8f58",
+    "solver/clawpack-v5.14.0/riemann/src/rpn2_geoclaw.f": "c52649def884ce374dbb1d3dc1e91f7a9c33aa45a0aff691badc8811b9157d1f",
+    "solver/clawpack-v5.14.0/riemann/src/geoclaw_riemann_utils.f": "df73207446ac730f9cda9a8ca4dbbc625151ba95d13aa514ce87ca23cb598761",
+    "solver/cut_cells/cutcell_solver.f90": "71b9a35dc2f472899710d5855c7e6e0d17dff5d789eba9378b1dc2e070d5a301"
+  },
+  "snapshot_source_sha256": {
+    "geoclaw_parameters.f90": "b6e5a70595e93279eac113401dfc2d857978f7a6e885fe730c783c17cc5b3c1d",
+    "braids_hydraulic_roughness_module.f90": "255e523e3650e5b1d28fdbdea7c7d6302e4d1d954adda540b7ad019af6b04fbf",
+    "braids_soulsby_van_rijn_module.f90": "125e72f37a074df7a95e158651fd7365f69c4400457e388e8b5ceaa2ba1364b9",
+    "braids_delft_capacity_module.f90": "eac91803ed99fd587b23e82d1670e4ff752d2116d7cd653e011e822d0ca2fd6d",
+    "braids_scalar_capacity_runtime_module.f90": "78ee1b7caeaab972932246195162d90e601e526c797028909898a28a83013553",
+    "braids_delft_channel_composer_module.f90": "648c73e7e7e0f1daeb0a6f1652c334e3d1700367f62a625730f6976aba278974",
+    "braids_sediment_shear_module.f90": "965d6d17c6f3a45ddf5f515e187fdf44e054dbdce47e57d9a3c8fcca70d6c3c1",
+    "braids_exner_mol_module.f90": "cc32e16439cf7b7636efd2b052045b123b0d32ec7ab8ad2d0c970cfa168986fb",
+    "braids_van_rijn_1993_module.f90": "a12f556c0ff2114eb3a2287be65fa45a695fd7bec4f376e3920ec2e5780a7665",
+    "braids_bedload_vr1993_module.f90": "815e35ec3b32c9c20484e7e56c3f6f1a5bb50fa2e6aa88bc88f04b7fcfe54624",
+    "braids_bedload_mpm_module.f90": "e67995fe3d3f2b5ffe3fa0d2a1cdc95abc439076bef35dbe6b035e1ecf0ffcf6",
+    "braids_bedform_roughness_module.f90": "77f32fd2894e29c06bae02cc975359bb54b19ff24cbbb3dcb230a5dfcaeba99f",
+    "braids_bedload_current_module.f90": "ca59bf18e07c48200ab8a5ec43326349f19dc97f044c71c846dad7ec21a8e402",
+    "braids_secondary_flow_module.f90": "0646e37597912e1d3491f08d8339f38baeef0f1380757d408c8c820815b5670f",
+    "braids_curvature_regularization_module.f90": "f8770b50a2a5eb7c2cf188ac46a62a5fcaad5bc1ecf59df4ac48a3d80f63c253",
+    "braids_cohesive_exchange_module.f90": "caceb34939ef81cd739e66c02506361897adf018e04325be8188697ddc5ca63a",
+    "braids_hiding_exposure_module.f90": "4da9ab77936b192cb78c7f8e524f6da6b8c040983fa5a3f69f4a152d5a852e79",
+    "braids_bed_slope_module.f90": "14b01a6a5b6c3fbf2b80cc3acb7601ba1582227cc3a6dc43c18eb9f0c97de208",
+    "braids_morphodynamic_flux_module.f90": "9b252be10db35f102fe80fbde8dd92bb7a950b94922c26d5f4a7e4328156ae6a",
+    "braids_bank_toe_geometry_module.f90": "504d8b7b093cd30dfa6e28525ef626d44e2609f51c27578f3c380db12d99104e",
+    "braids_bank_toe_supply_module.f90": "1b65bd34778c1623371de475959ce19135e482e56bab6259c5c94496e0f4ed80",
+    "braids_bank_toe_flux_module.f90": "e343260f9c0f08c55e65f71c4b3e9822b4905182c4a082ee2fd0ae7259a0f184",
+    "braids_distributed_bank_module.f90": "c5ce4f873d93f1d56e16cf47fbb17a5962a142e14465361c737d09678cb258dd",
+    "braids_bank_front_module.f90": "cc3c0e3a7b37328afcf3e47a5bb280fafb096281d4b7f426aa0fee65e7d1eb7e",
+    "braids_accepted_flux_reconstruction_module.f90": "8260c29ede8988085661cf3eb61fd208d06641f6f84a00469025668a382f0075",
+    "braids_bank_reconstruction_module.f90": "fee9d141da12e6cc0bf2e42d65bb2adc98c5f81d8523639b7f15b7cea3228979",
+    "braids_viscous_inlet_module.f90": "7c91d088a7224a6bedced1e51e45d5509397dcfead139445c368bf56f23e8f58",
+    "rpn2_geoclaw.f": "c52649def884ce374dbb1d3dc1e91f7a9c33aa45a0aff691badc8811b9157d1f",
+    "geoclaw_riemann_utils.f": "df73207446ac730f9cda9a8ca4dbbc625151ba95d13aa514ce87ca23cb598761",
+    "cutcell_solver.f90": "5bb70d3764dfbd05b6ff8d0322fc0cf7eb421237ff16f80512b3189fe0a66541"
+  },
+  "source_sha256": {
+    "geoclaw_parameters.f90": "b6e5a70595e93279eac113401dfc2d857978f7a6e885fe730c783c17cc5b3c1d",
+    "braids_hydraulic_roughness_module.f90": "255e523e3650e5b1d28fdbdea7c7d6302e4d1d954adda540b7ad019af6b04fbf",
+    "braids_soulsby_van_rijn_module.f90": "125e72f37a074df7a95e158651fd7365f69c4400457e388e8b5ceaa2ba1364b9",
+    "braids_delft_capacity_module.f90": "eac91803ed99fd587b23e82d1670e4ff752d2116d7cd653e011e822d0ca2fd6d",
+    "braids_scalar_capacity_runtime_module.f90": "78ee1b7caeaab972932246195162d90e601e526c797028909898a28a83013553",
+    "braids_delft_channel_composer_module.f90": "648c73e7e7e0f1daeb0a6f1652c334e3d1700367f62a625730f6976aba278974",
+    "braids_sediment_shear_module.f90": "965d6d17c6f3a45ddf5f515e187fdf44e054dbdce47e57d9a3c8fcca70d6c3c1",
+    "braids_exner_mol_module.f90": "cc32e16439cf7b7636efd2b052045b123b0d32ec7ab8ad2d0c970cfa168986fb",
+    "braids_van_rijn_1993_module.f90": "a12f556c0ff2114eb3a2287be65fa45a695fd7bec4f376e3920ec2e5780a7665",
+    "braids_bedload_vr1993_module.f90": "815e35ec3b32c9c20484e7e56c3f6f1a5bb50fa2e6aa88bc88f04b7fcfe54624",
+    "braids_bedload_mpm_module.f90": "e67995fe3d3f2b5ffe3fa0d2a1cdc95abc439076bef35dbe6b035e1ecf0ffcf6",
+    "braids_bedform_roughness_module.f90": "77f32fd2894e29c06bae02cc975359bb54b19ff24cbbb3dcb230a5dfcaeba99f",
+    "braids_bedload_current_module.f90": "ca59bf18e07c48200ab8a5ec43326349f19dc97f044c71c846dad7ec21a8e402",
+    "braids_secondary_flow_module.f90": "0646e37597912e1d3491f08d8339f38baeef0f1380757d408c8c820815b5670f",
+    "braids_curvature_regularization_module.f90": "f8770b50a2a5eb7c2cf188ac46a62a5fcaad5bc1ecf59df4ac48a3d80f63c253",
+    "braids_cohesive_exchange_module.f90": "caceb34939ef81cd739e66c02506361897adf018e04325be8188697ddc5ca63a",
+    "braids_hiding_exposure_module.f90": "4da9ab77936b192cb78c7f8e524f6da6b8c040983fa5a3f69f4a152d5a852e79",
+    "braids_bed_slope_module.f90": "14b01a6a5b6c3fbf2b80cc3acb7601ba1582227cc3a6dc43c18eb9f0c97de208",
+    "braids_morphodynamic_flux_module.f90": "9b252be10db35f102fe80fbde8dd92bb7a950b94922c26d5f4a7e4328156ae6a",
+    "braids_bank_toe_geometry_module.f90": "504d8b7b093cd30dfa6e28525ef626d44e2609f51c27578f3c380db12d99104e",
+    "braids_bank_toe_supply_module.f90": "1b65bd34778c1623371de475959ce19135e482e56bab6259c5c94496e0f4ed80",
+    "braids_bank_toe_flux_module.f90": "e343260f9c0f08c55e65f71c4b3e9822b4905182c4a082ee2fd0ae7259a0f184",
+    "braids_distributed_bank_module.f90": "c5ce4f873d93f1d56e16cf47fbb17a5962a142e14465361c737d09678cb258dd",
+    "braids_bank_front_module.f90": "cc3c0e3a7b37328afcf3e47a5bb280fafb096281d4b7f426aa0fee65e7d1eb7e",
+    "braids_accepted_flux_reconstruction_module.f90": "8260c29ede8988085661cf3eb61fd208d06641f6f84a00469025668a382f0075",
+    "braids_bank_reconstruction_module.f90": "fee9d141da12e6cc0bf2e42d65bb2adc98c5f81d8523639b7f15b7cea3228979",
+    "braids_viscous_inlet_module.f90": "7c91d088a7224a6bedced1e51e45d5509397dcfead139445c368bf56f23e8f58",
+    "rpn2_geoclaw.f": "c52649def884ce374dbb1d3dc1e91f7a9c33aa45a0aff691badc8811b9157d1f",
+    "geoclaw_riemann_utils.f": "df73207446ac730f9cda9a8ca4dbbc625151ba95d13aa514ce87ca23cb598761",
+    "cutcell_solver.f90": "5bb70d3764dfbd05b6ff8d0322fc0cf7eb421237ff16f80512b3189fe0a66541"
+  },
+  "numerical_source_unchanged": true,
+  "numerical_source_unchanged_by_instrumentation": true,
+  "instrumentation_reversibility": "Removing five uniquely authenticated inserted blocks restores source exactly",
+  "instrumentation_scope": "Exact authenticated v55 Q3-H1 modes 2/3/4/5 with laws 2/11 over the intact v54/v53 Q3-C chain; initial physical state, geometry, forcing, hiding identity and diffusion-coefficient I/O; unconditional zero-step exit",
+  "initializer_scope_extension": "Delft3D hydraulic C/M/W roughness, total/Soulsby-Clarke sediment shear, authenticated v54 scalar-capacity laws 2/11 with raw-FP64 forcing, and additive v55 generic hiding/exposure identity",
+  "exported_native_controls": [
+    "engelund_hansen_chezy",
+    "hydraulic_roughness_mode",
+    "white_colebrook_chzk2d",
+    "sediment_shear_mode",
+    "roughness_minimum_work_depth",
+    "skin_kinematic_viscosity",
+    "skin_sand_roughness",
+    "skin_silt_roughness",
+    "skin_critical_mud_fraction_low",
+    "skin_critical_mud_fraction_high",
+    "skin_fluff_fraction",
+    "native_q3c_forcing_verified",
+    "native_q3c_forcing_envelope",
+    "native_q3c_formula_code",
+    "native_q3c_method_id_ascii",
+    "native_q3c_execution_fingerprint_ascii",
+    "native_q3c_profile_fingerprint_ascii",
+    "native_q3c_forcing_fingerprint_ascii",
+    "native_q3c_raw_roughness_sha256_ascii",
+    "native_q3h1_identity_verified",
+    "native_q3h1_identity_envelope",
+    "native_q3h1_formula_code",
+    "native_q3h1_hiding_mode",
+    "native_q3h1_parker_alpha",
+    "native_q3h1_wu_exponent",
+    "native_q3h1_execution_fingerprint_ascii"
+  ],
+  "native_solver_steps_performed": 0,
+  "unconditional_initialization_exit": true,
+  "frozen_initializer_identities": {
+    "native_exporter_v1": {
+      "build_sha256": "002a879a1ae011aae2aeeb7222ad02c836a26646448a37747154b2901266125a",
+      "executable_sha256": {
+        "xbraids_normal_export.exe": "a50f91dd99e5b48af94535761a7ec2f5b933e1e21ca9479370e78d03275eac33"
+      }
+    },
+    "native_exporter_v2": {
+      "build_sha256": "15c8d19e9e872ea08ec5000bb71e3a9d6f7bb59035e9ebffb54a578d6f821120",
+      "executable_sha256": {
+        "xbraids_integrated_export.exe": "44b50de40f6d7851957f435a76a16f0995947012bd1ecfd7fcd8776c3915e226"
+      }
+    },
+    "native_exporter_v3": {
+      "build_sha256": "ba4909716558e3c34bde88a2c08b448d15d4f14790e24e4671f76ef5581b2e43",
+      "executable_sha256": {
+        "xbraids_eh_export.exe": "898f467518789453ee2be202095eef2a81725c4e262f0c1c22b0625be56970fd"
+      }
+    },
+    "native_exporter_v4": {
+      "build_sha256": "d8d098c32cc74a89bcd93534d166ff721bd194bda957157a995158ac6b2abcc0",
+      "executable_sha256": {
+        "xbraids_gaia_export.exe": "90eeb6a5740ba0fa7aee3613855380e6185724209a636d4603ff77a5db7c203f"
+      }
+    },
+    "native_exporter_v5": {
+      "build_sha256": "24daa64a4ea7fd3a5d6600407f40d4f2ab91ff819c3d9614fab2d8110a64635d",
+      "executable_sha256": {
+        "xbraids_gaia_export.exe": "970dc63b032a08de59ca18506c9eb804c7c0d3efdd646f698000dbf981018eb5"
+      }
+    },
+    "native_exporter_v6": {
+      "build_sha256": "bfd945e2fd1747ba1c2ff406238d64401f226c48841225c3425912bfb8390658",
+      "executable_sha256": {
+        "xbraids_gaia_export.exe": "1c1c8503b7e297e6df07fa53685c41635937ea982254f6719bfe205d253be838"
+      }
+    },
+    "native_exporter_v7": {
+      "build_sha256": "a08e93190e48842b2ce02ca134e089eba734f3d2cf89276baf8dba59670eb547",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "78d961f9905013590883b2c489ed1599e2f62e385e29687e16dc34e76c7920b5"
+      }
+    },
+    "native_exporter_v8": {
+      "build_sha256": "4252dabf9f05e71ea3022c37228668bd197d8540131d6198bdf1ea28b9d8ebf1",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "5a710ab5cd2fb0b7aa631fa5d7ec38f9e21c1724b44e7a7871ab796bb9b88001"
+      }
+    },
+    "native_exporter_v9": {
+      "build_sha256": "15ad9a28c790107d92b3476e0e303953e418f41fd2123e2d3d13f5d773cef64b",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "3cc78d47f77a2449d110953d7c52f0ccfdd445aac53efbd47f070656a11fd013"
+      }
+    },
+    "native_exporter_v10": {
+      "build_sha256": "e7ad842576d1eff06bc71a6173c1a93650a3e232bc88805679f388e2ae266ac6",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "aa83af6b4dd4dad38ed584dac29aae6f8aac2770c2690e75bf9c031c42927949"
+      }
+    },
+    "native_exporter_v11": {
+      "build_sha256": "5d6461f9476ecda12ff4cdb6b21f09d04675a882afa62b10fc6c5970d4d47d09",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "35bad36ca47bc885ac72b465e531932ee4537be4449a9c97bd9e675b4d821968"
+      }
+    },
+    "native_exporter_v12": {
+      "build_sha256": "a38feef1758b663b1bb3c83ba34d6c0f901aa6a8b3c1b7345771803c6765a66a",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "c6ebef0805fad6b4d3893c9deae7e52d5fccda77059309c66441e4a88e2d33c9"
+      }
+    },
+    "native_exporter_v13": {
+      "build_sha256": "21ce4ef621aa09e10cc9facfd449dafb77fe863bb7773f34bee83bef981de784",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "1828a447ea08e5311828128cca005581f44d14b88dc409a63ff9f48faacbacb8"
+      }
+    },
+    "native_exporter_v14": {
+      "build_sha256": "b4e09555d6476c847eb42c7abe5b4ed7f5a6c14b867f2e4667d2c0ca46b231bf",
+      "executable_sha256": {
+        "xbraids_delft_export.exe": "d803c052cfc3db3de71ef387dc7e77f1458c1d11a691a1b44b429af4ba7f699f"
+      }
+    }
+  },
+  "frozen_initializers_modified": false,
+  "frozen_qualification_relabelled": false,
+  "Delft3D_source_modified": false
+}

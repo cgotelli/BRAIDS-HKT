@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "milestone": "phase4_bedload_adaptation_length",
+  "qualified": true,
+  "status": "PASS",
+  "gates_passed": 7,
+  "gates_total": 7,
+  "default_length_diameters": 100.0,
+  "evidence": "validation/sediment/delft3d_current/adaptation_length/reports/metrics.json",
+  "delft3d_comparator": "pinned current-source tranb2 local-equilibrium capacity",
+  "regressions": [
+    "tests/test_bedload_adaptation.py",
+    "tests/test_delft3d_adaptation_length.py"
+  ],
+  "scope": "Optional default-off steady bed-load relaxation; class length equals the configured factor times D50. Suspended-load adaptation is not included."
+}

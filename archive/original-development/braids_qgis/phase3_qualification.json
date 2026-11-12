@@ -1,0 +1,119 @@
+{
+  "format": "braids-phase3-qualification-v1",
+  "phase": 3,
+  "title": "Graded beds, armoring and finite stratigraphy",
+  "status": "PASS",
+  "qualified_on": "2026-09-23",
+  "milestones_passed": 3,
+  "milestones_total": 3,
+  "qualification_cases": 3,
+  "gates_passed": 74,
+  "gates_total": 74,
+  "comparison_basis": [
+    "locked current-source Delft3D4",
+    "independent per-fraction conservation references"
+  ],
+  "scope": [
+    "two- and three-fraction graded-bed sorting and surface armoring",
+    "surface and subsurface D10, D50, D90 and geometric mean diameter",
+    "finite ordered substrate layers, exposure and buried-pulse recovery",
+    "constant and optional water-depth-scaled active-layer thickness",
+    "total and per-fraction budgets plus one/eight-thread determinism"
+  ],
+  "limitations": [
+    "This qualifies compact process-isolation cases, not a complete laboratory braided-river experiment.",
+    "Different numerical schemes need similar trends and profiles, not cell-by-cell identity; buried-pulse amplitudes differ and are reported.",
+    "Vertical bed diffusion is excluded after the locked Delft3D runtime failed with negative layer mass and hydraulic blow-up.",
+    "Infinite constant-composition bases and dune-height scaling are excluded; variable porosity requires its own conservation qualification.",
+    "Suspended/cohesive transport, general bar avalanching, secondary flow and calibrated bank failure remain later phases."
+  ],
+  "key_results": {
+    "minimum_surface_sorting_correlation": 0.9957931487966856,
+    "minimum_graded_bed_profile_correlation": 0.995783392169378,
+    "minimum_erosional_armoring_fraction": 1.0,
+    "fine_grid_final_coarse_surface_fraction": {
+      "braids": 0.31285912683332945,
+      "delft3d": 0.31283741062569453
+    },
+    "stratigraphy_bed_change_profile_correlation": 0.9970619061242244,
+    "buried_pulse_peak_time_s": {
+      "braids": 51.0,
+      "delft3d": 57.0
+    },
+    "buried_pulse_surface_fraction_increase": {
+      "braids": 0.1072424645876426,
+      "delft3d": 0.3282704406482701
+    },
+    "minimum_final_preserved_layer_fine_fraction_range": 0.15805398684834804,
+    "depth_scaled_active_layer_profile_mae_m": 1.312304851002681e-06,
+    "depth_scaled_active_layer_profile_correlation": 0.9999525341476113,
+    "depth_scaled_bed_change_profile_correlation": 0.9970864310440413,
+    "maximum_braids_total_sediment_budget_relative_residual": 1.4070680748646107e-11,
+    "maximum_delft3d_total_sediment_budget_relative_residual": 2.2531027889990303e-05,
+    "one_eight_thread_maximum_state_difference": 0.0,
+    "vertical_diffusion_rejection": {
+      "coefficient_m2_s": 1e-07,
+      "success": false,
+      "return_code": 139,
+      "failure_timestep": 4,
+      "flow_exited_abnormally": true,
+      "water_level_blowup": true,
+      "negative_layer_mass_signature": true,
+      "log_sha256": "ab41d325d32f56b52ef45b9090b50c9354ac5f3a1978e7c8180e0f227defb8dc",
+      "diagnosis_sha256": "b387047ea07b8a19024ff3e4d723fc00d00345215c2cebf2ad56dcf7e15a7fe0"
+    },
+    "bed_composition_mode_decision": {
+      "retain": [
+        "constant active layer",
+        "optional water-depth-scaled active layer",
+        "ordered Eulerian-style layers",
+        "finite updated base"
+      ],
+      "exclude": [
+        "vertical bed diffusion by default",
+        "constant-composition infinite base",
+        "dune-height scaling until a bedform model exists"
+      ],
+      "rationale": "Depth scaling has a directly paired conservative implementation. The locked Delft3D vertical-diffusion mode aborts nonphysically and represents bioturbation/subsurface mixing, for which this steep noncohesive gravel application has no calibrated mechanism."
+    }
+  },
+  "milestones": [
+    {
+      "milestone": 1,
+      "case_id": "graded_bed_baseline",
+      "title": "Graded-bed sorting and surface armoring",
+      "status": "PASS",
+      "gates_passed": 29,
+      "gates_total": 29,
+      "metrics_path": "validation/sediment/delft3d_current/graded_bed_baseline/reports/metrics.json",
+      "metrics_sha256": "23c0568d2ed5742bb2987aa3a185782521b4443c9226667b3f3707d2d2726430",
+      "report_path": "validation/sediment/delft3d_current/graded_bed_baseline/reports/REPORT.md",
+      "report_sha256": "f74727b58845340a5119bd069e618b47722fb4a054ecbb80bd24cb8aa4697585"
+    },
+    {
+      "milestone": 2,
+      "case_id": "stratigraphy_pulse",
+      "title": "Substrate exposure and buried-pulse recovery",
+      "status": "PASS",
+      "gates_passed": 19,
+      "gates_total": 19,
+      "metrics_path": "validation/sediment/delft3d_current/stratigraphy_pulse/reports/metrics.json",
+      "metrics_sha256": "cbadd211cbbe74bc7d919414924194c99fd3febc8f1b2f16fcfb4782458bebf8",
+      "report_path": "validation/sediment/delft3d_current/stratigraphy_pulse/reports/REPORT.md",
+      "report_sha256": "a6634c7d0db096838e9b8dd3776662ec46668d68f7c187016f44406266359bf3"
+    },
+    {
+      "milestone": 3,
+      "case_id": "active_layer_sensitivity",
+      "title": "Active-layer thickness and mixing decision",
+      "status": "PASS",
+      "gates_passed": 26,
+      "gates_total": 26,
+      "metrics_path": "validation/sediment/delft3d_current/active_layer_sensitivity/reports/metrics.json",
+      "metrics_sha256": "60c39aa9d5a76b2f15bfcdc18d14be649b825cbe5bbefe17a416f87080057bf4",
+      "report_path": "validation/sediment/delft3d_current/active_layer_sensitivity/reports/REPORT.md",
+      "report_sha256": "60b7307f93274b4bf208cca62d6e697c6f078ac8d8d3831fc600784349df31c3"
+    }
+  ],
+  "integrated_report": "validation/sediment/delft3d_current/phase3_qualification/reports/PHASE3_QUALIFICATION.md"
+}
